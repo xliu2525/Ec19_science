@@ -1,0 +1,8 @@
+
+logs/
+output/
+data_dir/
+**__pycache__**
+**test**
+params/
+TMscore*
