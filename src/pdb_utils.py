@@ -3,6 +3,7 @@ from os import path
 import hashlib
 
 from Bio.PDB import PDBParser, Polypeptide
+from Bio.Data.PDBData import protein_letters_3to1
 import pandas as pd
 from gemmi import cif
 import atomium
@@ -25,7 +26,7 @@ def extract_chains_ids(pdb_path, target_chain):
         chain_ids.append(chain.id)
         if chain.id == target_chain:
             dlog(chain, chains)
-            initial_seq = "".join([Polypeptide.protein_letters_3to1.get(res.get_resname(), 'X') for res in chain.get_residues()])
+            initial_seq = "".join([protein_letters_3to1.get(res.get_resname(), 'X') for res in chain.get_residues()])
     return chain_ids, initial_seq
 
 def extract_all_chains(pdb_path):
@@ -35,7 +36,7 @@ def extract_all_chains(pdb_path):
     pdb_chains = structure[0]
     chains = {}
     for chain in pdb_chains:
-        chains[chain.id] = "".join([Polypeptide.protein_letters_3to1.get(res.get_resname(), 'X') for res in chain.get_residues()])
+        chains[chain.id] = "".join([protein_letters_3to1.get(res.get_resname(), 'X') for res in chain.get_residues()])
     return chains
 
 def extract_fixed_chains(pdb_path, target_chain):
