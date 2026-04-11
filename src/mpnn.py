@@ -13,6 +13,13 @@ import time
 from log import dlog
 from common import memory
 
+import os
+# Get path to project root (EC19_Science)
+ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../"))
+
+# Add ProteinMPNN to Python path
+sys.path.append(os.path.join(ROOT, "ProteinMPNN"))
+
 from protein_mpnn_utils import _scores, _S_to_seq, tied_featurize, parse_PDB, StructureDatasetPDB, ProteinMPNN
 
 def init_mpnn_model(root, gpu_id=0):
@@ -75,7 +82,7 @@ num_seq_per_target = num_seqs
 sampling_temp = "0.1" #@param ["0.0001", "0.1", "0.15", "0.2", "0.25", "0.3", "0.5"]
 
 
-
+base_folder="."
 save_score=0                      # 0 for False, 1 for True; save score=-log_prob to npy files
 save_probs=0                      # 0 for False, 1 for True; save MPNN predicted probabilites per position
 score_only=0                      # 0 for False, 1 for True; score input backbone-sequence pairs
@@ -239,8 +246,6 @@ def generate_seq(model_mpnn, dataset_valid, chain_id_dict, override_seqs=None, t
                 native_score = scores.cpu().data.numpy()
                 # Generate some sequences
                 ali_file = base_folder + '/seqs/' + batch_clones[0]['name'] + '.fa'
-                score_file = base_folder + '/scores/' + batch_clones[0]['name'] + '.npy'
-                probs_file = base_folder + '/probs/' + batch_clones[0]['name'] + '.npz'
                 print(f'Generating sequences for: {name_}')
                 t0 = time.time()
                 for temp in temperatures:
@@ -308,8 +313,10 @@ def generate_seq(model_mpnn, dataset_valid, chain_id_dict, override_seqs=None, t
 
                             print('>T={}, sample={}, score={}, seq_recovery={}\n{}\n'.format(temp,b_ix,score_print,seq_rec_print,seq)) #write generated sequence
                 if save_score:
+                    score_file = base_folder + '/scores/' + batch_clones[0]['name'] + '.npy'
                     np.save(score_file, np.array(score_list, np.float32))
                 if save_probs:
+                    probs_file = base_folder + '/probs/' + batch_clones[0]['name'] + '.npz'
                     all_probs_concat = np.concatenate(all_probs_list)
                     all_log_probs_concat = np.concatenate(all_log_probs_list)
                     S_sample_concat = np.concatenate(S_sample_list)

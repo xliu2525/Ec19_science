@@ -398,7 +398,7 @@ class SimultaneousMsaTransRecoder(EsmRecoder):
 
         for label, wt_seq in tqdm.tqdm(zip(labels, wt_seqs), total=len(labels), desc='Processing MSAs.'):
             prefix = label.split('|')[0]
-            uniprot = prefix.split('_')[1]
+            uniprot = prefix.split('_')[0]
             try:
                 msa_file = glob.glob(os.path.join(kwargs['msa_dir'], f"{uniprot}*.a3m"))[0]
                 print(prefix)
@@ -505,7 +505,7 @@ class AutoregressiveMsaTransRecoder(EsmRecoder):
        
         for label, wt_seq in tqdm.tqdm(zip(labels, wt_seqs), total=len(labels), desc='Processing MSAs.'):
             prefix = label.split('|')[0]
-            uniprot = prefix.split('_')[1]
+            uniprot = prefix.split('_')[0]
             try: 
                 msa_file = glob.glob(os.path.join(kwargs['msa_dir'], f"{uniprot}*.a3m"))[0]
                 print(prefix)

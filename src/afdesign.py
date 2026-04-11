@@ -4,7 +4,7 @@ from os import path
 
 import numpy as np
 
-from pdb import extract_all_chains, positions_hash
+from pdb_utils import extract_all_chains, positions_hash
 
 from colabdesign.af.alphafold.common import residue_constants
 from colabdesign.af import mk_af_model, clear_mem
@@ -82,7 +82,7 @@ def design_af_with_mpnn_bias(code_root, data_root, uniprot_id, letter_to_redesig
     logger.critical(f"Config: {config_version}")
     model_mpnn = init_mpnn_model(code_root)
 
-    pdb_path = path.join(data_root, f"ribo/{uniprot_id}_nearby_protein_{letter_to_redesign}.pdb")
+    pdb_path = path.join(data_root, f"{uniprot_id}_nearby_protein_{letter_to_redesign}.pdb")
     use_templates = True
     designed_chain = 'X'
 

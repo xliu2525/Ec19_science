@@ -66,6 +66,9 @@ def tmscore(x,y):
     if line.startswith("RMSD"): o["rms"] = parse_float(line)
     if line.startswith("TM-score"): o["tms"] = parse_float(line)
     if line.startswith("GDT-TS-score"): o["gdt"] = parse_float(line)
+  # clean up temp files
+  os.remove(f"0_{pid}.pdb")
+  os.remove(f"1_{pid}.pdb")
   return o
   
 def plot_me(scores, x="tm_i", y="composite", 

@@ -18,7 +18,7 @@ from common import memory
 from mpnn import load_data_from_pdb_path, score_seq_mpnn, init_mpnn_model, compute_mpnn_seqs, \
     generate_seq, alphabet as mpnn_alphabet, unpack_probs_by_name
 from af2rank import af2rank, score_seqs
-from pdb import extract_fixed_chains, extract_chains_ids
+from pdb_utils import extract_fixed_chains, extract_chains_ids
 from log import dlog
 
 def load_esm(model_name="esm2_t33_650M_UR50D", device_index=0):
@@ -111,7 +111,7 @@ def compute_protein_scores(data_root: str, seqs_by_lib: Dict[str,str], methods: 
     Returns dataframe with normalized scores for each method.
     """
     pdb_name = f"{uniprot_id}_nearby_protein_{letter_to_redesign}"
-    pdb_path = path.join(data_root, f"ribo/{pdb_name}.pdb")
+    pdb_path = path.join(data_root, f"{pdb_name}.pdb")
     target_chain = "X"
     fixed_chains_list, initial_seq = extract_fixed_chains(pdb_path, target_chain)    
     start_index = reference_seq.find(initial_seq)
@@ -279,7 +279,7 @@ def prepare_multichain_dataset(pdb_path, letter_to_redesign, target_chain, fixed
 def generate_mpnn_designs(data_root, code_root, gene_name, uniprot_id, reference_seq, letter_to_redesign,
     include_neighbors, temp, mpnn_designs_num, redesign_radius, top_to_take, config_version=None):
     pdb_name = f"{uniprot_id}_nearby_protein_{letter_to_redesign}"
-    pdb_path = path.join(data_root, f"ribo/{pdb_name}.pdb")
+    pdb_path = path.join(data_root, f"{pdb_name}.pdb")
     target_chain = "X"
     fixed_chains_list, initial_seq = extract_chains_ids(pdb_path, target_chain)
     fixed_chains_list = [chain for chain in fixed_chains_list if chain != target_chain]
@@ -384,7 +384,7 @@ def design_dir(data_root, version):
 def score_designs(data_root, code_root, gene_name, uniprot_id, reference_seq, letter_to_redesign, redesign_radius, top_to_take, mpnn_designs_num,
     multimer=False, single_chain=False, config_version=None, llm_designs=True, method='mpnn'):
     pdb_name = f"{uniprot_id}_nearby_protein_{letter_to_redesign}"
-    pdb_path = path.join(data_root, f"ribo/{pdb_name}.pdb")
+    pdb_path = path.join(data_root, f"{pdb_name}.pdb")
     target_chain = "X"
     fixed_chains_list, initial_seq = extract_chains_ids(pdb_path, target_chain)
     # remove 'X' from fixed chains

@@ -90,10 +90,10 @@ def design_af_with_mpnn_bias_parallel(context,
     try:
         allocate_gpu(context.gpu_holder, context.gpu_holder_lock)
 
-        from recoding.code.structure.common import init
+        from common import init
         init(context.code_root)
-        from recoding.code.structure.common import memory
-        from recoding.code.structure.afdesign import design_af_with_mpnn_bias
+        from common import memory
+        from afdesign import design_af_with_mpnn_bias
 
         design_af_with_mpnn_bias_cached = memory.cache(design_af_with_mpnn_bias)
         seq, metric, recode_positions = design_af_with_mpnn_bias(context.code_root, data_root=context.data_root, uniprot_id=uniprot_id, 
@@ -114,9 +114,9 @@ def generate_mpnn_designs_parallel(context, gene_name, uniprot_id, reference_seq
     setup_logging(context.data_root)
     try:
         allocate_gpu(context.gpu_holder, context.gpu_holder_lock)
-        from recoding.code.structure.common import init
+        from common import init
         init(context.code_root)
-        from recoding.code.structure.recode import generate_mpnn_designs
+        from recode_structure import generate_mpnn_designs
 
         designs = generate_mpnn_designs(context.data_root, context.code_root, gene_name, uniprot_id, reference_seq, letter_to_redesign,
             include_neighbors, temp, mpnn_designs_num, redesign_radius, top_to_take, config_version)
@@ -131,11 +131,11 @@ def score_designs_parallel(context, gene_name, uniprot_id, reference_seq, letter
     setup_logging(context.data_root)
     try:
         allocate_gpu(context.gpu_holder, context.gpu_holder_lock)
-        from recoding.code.structure.common import init
+        from common import init
         init(context.code_root)
-        from recoding.code.structure.common import memory
+        from common import memory
 
-        from recoding.code.structure.recode import score_designs
+        from recode_structure import score_designs
         score_designs_cached = memory.cache(score_designs)
         print(f"Scoring designs for {uniprot_id} with args: gene_name={gene_name}, letter_to_redesign={letter_to_redesign}, redesign_radius={redesign_radius}, top_to_take={top_to_take}, mpnn_designs_num={mpnn_designs_num}, multimer={multimer}, single_chain={single_chain}, config_version={config_version}, llm_designs={llm_designs}, method={method}")
         results = score_designs(context.data_root, context.code_root, gene_name, uniprot_id, reference_seq, letter_to_redesign, redesign_radius, top_to_take,

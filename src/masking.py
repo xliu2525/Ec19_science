@@ -79,7 +79,7 @@ class Masking:
     
     def mask_3d_neighbors_in_seq_batch(self, must_mask: torch.Tensor, target_res_mask: torch.Tensor, labels: List[str], seqs: List[str], start_offset: int):
         for i, (label, seq) in enumerate(zip(labels, seqs)):
-            uniprot = label.split('|')[0].split("_")[1]
+            uniprot = label.split('|')[0].split("_")[0]
             interacting_pos = get_interacting_residues_from_structure(
                 self.structure_dir, uniprot, seq, target_res_mask[i][start_offset:len(seq)+1], self.min_3d_dist, self.max_3d_dist
                 )
