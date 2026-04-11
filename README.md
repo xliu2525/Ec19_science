@@ -23,8 +23,25 @@ Clone the [ProteinMPNN](https://github.com/dauparas/ProteinMPNN) repository **ne
 cd ../ec19
 git clone https://github.com/dauparas/ProteinMPNN.git
 ```
+### 3. Download AlphaFold weights
 
-### 3. Download and Setup Required Data
+Download AlphaFold weights according to the setup from [ColabDesign](https://github.com/sokrypton/ColabDesign/tree/main/af).
+
+```bash
+mkdir params
+curl -fsSL https://storage.googleapis.com/alphafold/alphafold_params_2022-12-06.tar | tar x -C params
+```
+
+### 4. Download TMscore
+
+Download [TMscore](https://aideepmed.com/TM-score/) which is used in scoring designed sequences.
+
+```bash
+wget https://aideepmed.com/TM-score/TMscore.cpp
+g++ -O3 -o TMscore TMscore.cpp
+```
+
+### 5. Download and Setup Required Data
 
 Download structure files and multiple sequence alignments (MSAs) from [Zenodo](https://zenodo.org/records/18155920):
 
