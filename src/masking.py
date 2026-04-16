@@ -90,7 +90,7 @@ class Masking:
         return must_mask
     
     def mask_3d_neighbors_in_msa_seq(self, must_mask: torch.Tensor, target_res_mask: torch.Tensor, label: str, seq: str, start_offset: int):
-        uniprot = label.split('|')[0].split("_")[1]
+        uniprot = label.split('|')[0].split("_")[0]
         interacting_pos = get_interacting_residues_from_structure(
             self.structure_dir, uniprot, seq, target_res_mask[0][start_offset:len(seq)+1], self.min_3d_dist, self.max_3d_dist
             )
