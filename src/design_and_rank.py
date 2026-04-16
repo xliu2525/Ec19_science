@@ -108,9 +108,9 @@ def generate_designs(target_genes, method, gpus, output_dir, data_root, code_roo
 
     return designs_df
 
-def score_all_designs(target_genes, gpus, output_dir, data_root, code_root, method):
+def score_all_designs(target_genes, gpus, output_dir, data_root, code_root, num_designs, method):
     context = create_context(code_root, data_root, gpus)
-    arguments = [(context, row.gene, row.uniprot_id, row.full_seq, 'I', 5, 0, 50, False, False, None, False, method)
+    arguments = [(context, row.gene, row.uniprot_id, row.full_seq, 'I', 5, 0, num_designs, False, False, None, False, method)
                  for _, row in target_genes.iterrows()]
 
     with multiprocessing.get_context('spawn').Pool(len(gpus)) as pool:
@@ -230,7 +230,7 @@ def main():
 
     num_designs = 2 if args.dry_run else 24
     designs_df = generate_designs(target_genes, args.method, gpus, output_dir, data_root, code_root, num_designs, quick=args.dry_run)
-    results_df = score_all_designs(target_genes, gpus, output_dir, data_root, code_root, args.method)
+    results_df = score_all_designs(target_genes, gpus, output_dir, data_root, code_root, num_designs, args.method)
 
     if args.method == 'mpnn':
         final_designs = rank_mpnn_designs(results_df, target_genes, designs_df)
