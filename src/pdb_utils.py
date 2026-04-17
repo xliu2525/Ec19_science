@@ -8,9 +8,14 @@ import pandas as pd
 from gemmi import cif
 import atomium
 from atomium import Model
-
+import numpy as np
 from log import dlog
 
+def get_ca_distance(res1, res2):
+    try:
+        return np.linalg.norm(np.array(res1.atom(name="CA").location) - np.array(res2.atom(name="CA").location))
+    except KeyError:
+        return None
 
 def positions_hash(positions_list):
     return hashlib.sha1(str(positions_list).encode()).hexdigest()[:6]

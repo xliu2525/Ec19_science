@@ -41,7 +41,15 @@ wget https://aideepmed.com/TM-score/TMscore.cpp
 g++ -O3 -o TMscore TMscore.cpp
 ```
 
-### 5. Download and Setup Required Data
+### 5. Download Confind files (for spatial neighbor)
+
+```
+cd /home/ubuntu/bin
+wget -qnc https://files.ipd.uw.edu/krypton/confind-msl-bin.tar.gz
+tar -xvzf confind-msl-bin.tar.gz
+```
+
+### 6. Download and Setup Required Data
 
 Download structure files and multiple sequence alignments (MSAs) from [Zenodo](https://zenodo.org/records/18155920):
 

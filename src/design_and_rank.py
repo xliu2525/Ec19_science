@@ -41,7 +41,7 @@ def load_genes_from_fasta(fasta_file):
         genes.append({'gene': gene, 'uniprot_id': uniprot_id, 'full_seq': str(record.seq)})
     return pd.DataFrame(genes)
 
-def generate_designs(target_genes, method, gpus, output_dir, data_root, code_root, num_designs=24, quick=False):
+def generate_designs(target_genes, method, gpus, output_dir, data_root, code_root, num_designs, spatial_neighbors, quick=False):
     context = create_context(code_root, data_root, gpus)
     arguments = []
 
@@ -82,7 +82,8 @@ def generate_designs(target_genes, method, gpus, output_dir, data_root, code_roo
             for include_neighbors in [True, False]:
                 for temp in temps:
                     arguments.append((context, row.gene, row.uniprot_id, row.full_seq, 'I',
-                                    include_neighbors, temp, num_per_config, 5, 0, None))
+                                    include_neighbors, temp, num_per_config, 
+                                    spatial_neighbors, None))
 
         with multiprocessing.get_context('spawn').Pool(len(gpus)) as pool:
             results = pool.starmap(generate_mpnn_designs_parallel, arguments, 1)
@@ -108,9 +109,9 @@ def generate_designs(target_genes, method, gpus, output_dir, data_root, code_roo
 
     return designs_df
 
-def score_all_designs(target_genes, gpus, output_dir, data_root, code_root, num_designs, method):
+def score_all_designs(target_genes, gpus, output_dir, data_root, code_root, num_designs, spatial_neighbors, method):
     context = create_context(code_root, data_root, gpus)
-    arguments = [(context, row.gene, row.uniprot_id, row.full_seq, 'I', 5, 0, num_designs, False, False, None, False, method)
+    arguments = [(context, row.gene, row.uniprot_id, row.full_seq, 'I', spatial_neighbors, num_designs, False, False, None, False, method)
                  for _, row in target_genes.iterrows()]
 
     with multiprocessing.get_context('spawn').Pool(len(gpus)) as pool:
@@ -198,6 +199,7 @@ def main():
     parser.add_argument('--method', choices=['mpnn', 'afdesign_mpnn_bias'], required=True, help='Design method to use')
     parser.add_argument('--dry_run', action='store_true', help='Generate minimal designs for testing')
     parser.add_argument('--data_dir', default='.', help='Data directory for input and output (default: current directory)')
+    parser.add_argument('--spatial_neighbors', action="store_true", default=False, help='If set, recodes residues that are spatially close to the target residue in the PDB structure using confind.')
     args = parser.parse_args()
 
     data_root = os.path.abspath(args.data_dir)
@@ -228,9 +230,11 @@ def main():
     target_genes = load_genes_from_fasta(fasta_file)
     gpus = list(range(args.gpus))
 
-    num_designs = 2 if args.dry_run else 24
-    designs_df = generate_designs(target_genes, args.method, gpus, output_dir, data_root, code_root, num_designs, quick=args.dry_run)
-    results_df = score_all_designs(target_genes, gpus, output_dir, data_root, code_root, num_designs, args.method)
+    num_designs = 2 if args.dry_run else 12
+    designs_df = generate_designs(target_genes, args.method, gpus, output_dir, data_root, code_root, num_designs, 
+                                  args.spatial_neighbors, quick=args.dry_run)
+    results_df = score_all_designs(target_genes, gpus, output_dir, data_root, code_root, num_designs, 
+                                   args.spatial_neighbors, args.method)
 
     if args.method == 'mpnn':
         final_designs = rank_mpnn_designs(results_df, target_genes, designs_df)
