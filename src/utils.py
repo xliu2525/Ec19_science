@@ -11,7 +11,8 @@ from typing import Dict, List, Tuple, Set
 from Bio import SeqIO, pairwise2
 
 from mpnn import load_data_from_pdb_path
-
+import pandas as pd
+import subprocess
 
 deletekeys = dict.fromkeys(string.ascii_lowercase)
 deletekeys["."] = None
@@ -190,6 +191,31 @@ def align_seq_from_structure_with_ref_seq(ref_seq: str, seq_to_align: str) -> np
     alignment = pairwise2.align.localxx(ref_seq, seq_to_align)
     return np.array(list(alignment[0][1]))
 
+def align_structure_to_full_seq(full_seq: str, structure_seq: str):
+    aln = pairwise2.align.localxx(full_seq, structure_seq)[0]
+    aligned_full = aln.seqA
+    aligned_structure = aln.seqB
+    return aligned_full, aligned_structure
+
+def build_structure_to_full_map(full_seq: str, structure_seq: str):
+    # Build mapping from PDB seq to full seq (1-based)
+    aligned_full, aligned_structure = align_structure_to_full_seq(full_seq, structure_seq)
+
+    structure_to_full = {}
+    full_idx = 0
+    structure_idx = 0
+
+    for a_full, a_struct in zip(aligned_full, aligned_structure):
+        if a_full != "-":
+            full_idx += 1
+        if a_struct != "-":
+            structure_idx += 1
+
+        if a_full != "-" and a_struct != "-":
+            structure_to_full[structure_idx] = full_idx
+
+    return structure_to_full, aligned_full, aligned_structure
+
 def get_aligned_residue_coords(aligned_seq: np.ndarray, structure_coords: List[List[float]]):
     """Extract coords align target seq with seq from structure to find missing residue coords."""
     print("aligned seq:", aligned_seq)
@@ -242,6 +268,70 @@ def get_interacting_residues_from_structure(
     aligned_af_seq = align_seq_from_structure_with_ref_seq(seq, seq_from_structure)
     coords = get_aligned_residue_coords(aligned_af_seq, unaligned_coords)
     return get_indices_of_interacting_residues(seq, coords, mask, min_dist_thresh, max_dist_thresh)
+
+def get_interacting_indices_from_confind(structures_dir: str, uniprot: str,confind_dir: str, output_dir: str,
+                                          cutoff=0.1):
+    # Get the positions (PDB, 1-based) of residues close to chain X, ILE positions
+    pdb_path = os.path.join(structures_dir, f"{uniprot}_nearby_protein_I.pdb")
+    os.makedirs(output_dir,exist_ok=True)
+    
+    output_path=f"{output_dir}/{uniprot}_confind.txt"
+    
+    if os.path.exists(output_path):
+        print("Skipping computing confind for", uniprot, "- file already exists")
+    else:
+        cmd = [
+            f"{confind_dir}/confind",
+            "--p", pdb_path,
+            "--o", output_path,
+            "--rLib", f"{confind_dir}/rotlibs/DB-2010/"
+        ]
+        subprocess.run(cmd, check=True)
+    
+    # Then process the data frame
+    df = pd.read_csv(output_path, sep="\t",header=None,names=["contact","res1","res2","prob","aa1","aa2"])
+
+    df["prob"] = pd.to_numeric(df["prob"], errors="coerce")
+
+    df[["chain1","res1_index"]]=df["res1"].str.split(",",expand=True)
+    df[["chain2","res2_index"]]=df["res2"].str.split(",",expand=True)
+
+    cols=["res1_index","res2_index"]
+    df[cols] = df[cols].apply(lambda s: pd.to_numeric(s, errors="coerce")).astype("Int64")
+    
+    df = df[
+        (df["chain1"] == "X") &
+        (df["chain2"] == "X") &
+        (df["prob"] > cutoff)
+    ]
+    
+    # Only keep top_to_take per res (ranked by prob)
+    # df = (
+    # df.sort_values("prob", ascending=False)
+    #   .groupby("res1_index", as_index=False)
+    #   .head(top_to_take)
+    # )
+
+    neighbors_from_res1 = df.loc[df["aa1"] == "ILE", "res2_index"].dropna().tolist()
+    neighbors_from_res2 = df.loc[df["aa2"] == "ILE", "res1_index"].dropna().tolist()
+
+    neighbor_PDB_idx = sorted(set(neighbors_from_res1 + neighbors_from_res2))
+    return neighbor_PDB_idx
+
+def map_pdb_to_full_seq_idx(structure_idx,structures_dir,uniprot,full_seq):
+    
+    structure_data = load_structure_data(structures_dir, uniprot)   
+    seq_from_structure = structure_data.data[0]["seq"]
+
+    structure_to_full, aligned_full, aligned_structure = build_structure_to_full_map(full_seq, seq_from_structure)
+    full_positions_0based = []
+    for idx in structure_idx:
+        full_pos_1based = structure_to_full.get(idx)
+        if full_pos_1based is not None:
+            full_positions_0based.append(full_pos_1based - 1)
+    
+    return full_positions_0based
+    
 
 def find_seqs_differences(seq1: str, seq2: str) -> str:
     seq1 = np.array(list(seq1)) 

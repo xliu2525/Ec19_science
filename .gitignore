@@ -6,3 +6,7 @@ data_dir/
 **test**
 params/
 TMscore*
+
+*json
+*.txt
+confind.sh
