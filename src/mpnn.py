@@ -346,7 +346,7 @@ def pack_probs_by_name(probs_by_name, alphabet):
         result[:, :, alphabet.index(name)] = v
     return result
 
-@memory.cache(ignore=['dataset','model_mpnn'])
+#@memory.cache(ignore=['dataset','model_mpnn'])
 def score_seq_mpnn(model_mpnn, seq, dataset, chain_id_dict, conditional_score=True):
     if conditional_score:       
         score, _ = generate_seq(model_mpnn, dataset, chain_id_dict, override_seqs={'X': seq}, conditional_probs_only=True)
@@ -360,7 +360,7 @@ def score_pdb(pdb_path, dataset, conditional_score=True):
     seq = pdb_dataset[0]['seq']
     return score_seq_mpnn(seq, dataset, chain_id_dict, conditional_score=conditional_score)
                 
-@memory.cache(ignore=['dataset', 'model_mpnn'])
+#@memory.cache(ignore=['dataset', 'model_mpnn'])
 def compute_mpnn_seqs(protein_name, model_mpnn, seq_num, dataset, chain_id_dict, fixed_positions, omit_AA, 
         override_seq = None, seed=42, temp=0.1):
     torch.manual_seed(seed)
