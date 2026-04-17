@@ -1,4 +1,4 @@
-This repository contains the code accompanying the paper "Towards life with a 19 amino acid alphabet via generative AI design." With this pipeline, you can generate and evaluate protein sequences that use only 19 amino acids, leveraging state-of-the-art generative models. The workflow integrates language models (ESM-2 and MSA Transformer) and structure-based methods (AlphaFold2 and ProteinMPNN) for protein design, assessment, and ranking.
+This repository contains the code accompanying the paper "Toward life with a 19–amino acid alphabet through generative artificial intelligence design." With this pipeline, you can generate and evaluate protein sequences that use only 19 amino acids, leveraging state-of-the-art generative models. The workflow integrates language models (ESM-2 and MSA Transformer) and structure-based methods (AlphaFold2 and ProteinMPNN) for protein design, assessment, and ranking.
 
 
 ## Installation
