@@ -4,7 +4,7 @@ from typing import List, Union
 import esm
 import torch
 
-from utils import get_interacting_residues_from_structure
+from utils import get_interacting_residues_from_structure,get_interacting_indices_from_confind,map_pdb_to_full_seq_idx
 
 
 class Masking:
@@ -80,9 +80,14 @@ class Masking:
     def mask_3d_neighbors_in_seq_batch(self, must_mask: torch.Tensor, target_res_mask: torch.Tensor, labels: List[str], seqs: List[str], start_offset: int):
         for i, (label, seq) in enumerate(zip(labels, seqs)):
             uniprot = label.split('|')[0].split("_")[0]
-            interacting_pos = get_interacting_residues_from_structure(
-                self.structure_dir, uniprot, seq, target_res_mask[i][start_offset:len(seq)+1], self.min_3d_dist, self.max_3d_dist
-                )
+            # interacting_pos = get_interacting_residues_from_structure(
+            #     self.structure_dir, uniprot, seq, target_res_mask[i][start_offset:len(seq)+1], self.min_3d_dist, self.max_3d_dist
+            #     )
+            neighboring_PDB_idx=get_interacting_indices_from_confind(self.structure_dir, uniprot,
+                                                                     confind_dir="/home/ubuntu/bin/confind-msl-bin", 
+                                                                     output_dir="Confind/")
+            interacting_pos=map_pdb_to_full_seq_idx(neighboring_PDB_idx,self.structure_dir,uniprot,seq)
+            print(interacting_pos)
             # add selected interacting residues to original mask
             print(f"3D neighbors: {interacting_pos}")
             for res_idx in interacting_pos:
@@ -91,10 +96,14 @@ class Masking:
     
     def mask_3d_neighbors_in_msa_seq(self, must_mask: torch.Tensor, target_res_mask: torch.Tensor, label: str, seq: str, start_offset: int):
         uniprot = label.split('|')[0].split("_")[0]
-        interacting_pos = get_interacting_residues_from_structure(
-            self.structure_dir, uniprot, seq, target_res_mask[0][start_offset:len(seq)+1], self.min_3d_dist, self.max_3d_dist
-            )
+        # interacting_pos = get_interacting_residues_from_structure(
+        #     self.structure_dir, uniprot, seq, target_res_mask[0][start_offset:len(seq)+1], self.min_3d_dist, self.max_3d_dist
+        #     )
         # add selected interacting residues to original mask
+        neighboring_PDB_idx=get_interacting_indices_from_confind(self.structure_dir, uniprot,
+                                                                     confind_dir="/home/ubuntu/bin/confind-msl-bin", 
+                                                                     output_dir="Confind/")
+        interacting_pos=map_pdb_to_full_seq_idx(neighboring_PDB_idx,self.structure_dir,uniprot,seq)
         print(f"3D neighbors: {interacting_pos}")
         for res_idx in interacting_pos:
             must_mask[0][res_idx + start_offset] = 1
