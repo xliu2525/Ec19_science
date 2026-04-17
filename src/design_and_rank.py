@@ -160,7 +160,8 @@ def rank_mpnn_designs(results_df, target_genes, designs_df):
 
             best_designs['gene'] = gene
             best_designs['uniprot_id'] = uniprot_id
-            final_designs = pd.concat([final_designs, best_designs[['gene', 'uniprot_id', 'seq', 'initial_seq']]])
+            best_designs['lib_name']=lib.replace("_","")
+            final_designs = pd.concat([final_designs, best_designs[['gene', 'uniprot_id', 'lib_name','seq', 'initial_seq']]])
 
     return final_designs
 
@@ -200,6 +201,7 @@ def main():
     parser.add_argument('--dry_run', action='store_true', help='Generate minimal designs for testing')
     parser.add_argument('--data_dir', default='.', help='Data directory for input and output (default: current directory)')
     parser.add_argument('--spatial_neighbors', action="store_true", default=False, help='If set, recodes residues that are spatially close to the target residue in the PDB structure using confind.')
+    parser.add_argument('--outfile', help='Output file name')
     args = parser.parse_args()
 
     data_root = os.path.abspath(args.data_dir)
@@ -238,16 +240,17 @@ def main():
 
     if args.method == 'mpnn':
         final_designs = rank_mpnn_designs(results_df, target_genes, designs_df)
-        lib_name = 'mpnn'
+        #lib_name = 'mpnn'
     else:
         final_designs = rank_afdesign_designs(results_df, target_genes, designs_df)
         lib_name = 'afdesign_mpnn_bias'
 
     date = datetime.now().strftime("%Y-%m-%d")
-    output_path = path.join(output_dir, f'ranked_designs_{args.method}')
-    save_designs_fasta(final_designs, output_path, lib_name, 'I', target_genes)
+    output_path = path.join(output_dir, args.outfile)
+    save_designs_fasta(final_designs, output_path, 'I', target_genes)
     logger = logging.getLogger(__name__)
-    logger.info(f"Saved {len(final_designs)} designs to {output_path}_I_{date}.fasta")
+    logger.info(f"Saved {len(final_designs)} designs to {output_path}.fasta")
+
 
 if __name__ == '__main__':
     main()

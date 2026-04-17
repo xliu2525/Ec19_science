@@ -25,8 +25,21 @@ import os
 import esm
 
 def load_esm(model_name="esm2_t33_650M_UR50D", device_index=0):
-    esm_model, esm_alphabet = torch.hub.load("facebookresearch/esm:main", model_name)
-    esm_model.eval().to(f'cuda:' + str(device_index))
+    loader = getattr(esm.pretrained, model_name, None)
+    if loader is None:
+        available = [x for x in dir(esm.pretrained) if not x.startswith("_")]
+        raise ValueError(
+            f"Model '{model_name}' not found in esm.pretrained. "
+            f"Available loaders: {available}"
+        )
+
+    out = loader()
+    if isinstance(out, tuple):
+        esm_model, esm_alphabet = out
+    else:
+        esm_model, esm_alphabet = out, None
+
+    esm_model.eval().to(f"cuda:{device_index}")
     print("ESM initialized")
     return esm_model, esm_alphabet
 
@@ -507,7 +520,7 @@ def score_designs(data_root, code_root, gene_name, uniprot_id, reference_seq, le
     protein_scores['initial_seq'] = initial_seq
     return protein_scores
 
-def save_designs_fasta(final_designs_df, file_prefix, lib_name, letter_to_redesign, target_genes):
+def save_designs_fasta(final_designs_df, file_name, letter_to_redesign, target_genes):
     # finally, write out to fasta file "ht_mpnn_{letter_to_redesign}_{date}.fasta"
     # seq description is "{gene}_{uniprot_id}_mpnn_{letter_to_redesign}_{index}"
     # index is 1, 2, etc depending on number of designs for that uniprot_id
@@ -521,10 +534,15 @@ def save_designs_fasta(final_designs_df, file_prefix, lib_name, letter_to_redesi
             # splice design seq with reference seq
             spliced_seq = splice_reference_seq(design.seq, design.initial_seq, reference_seq, letter_to_redesign)
             seq = Seq(spliced_seq)
-            description = f"{gene}_{uniprot_id}_{lib_name}_{letter_to_redesign}_{i+1}"        
+            description = f"{gene}_{uniprot_id}_{design.lib_name}_{letter_to_redesign}_{i+1}"        
             record = SeqRecord(seq, id=description, description='')
             records.append(record)
-    SeqIO.write(records, f"{file_prefix}_{letter_to_redesign}_{date}.fasta", "fasta")
+    
+    # if spatial_neighbors:
+    #     file_name=f"{file_prefix}_{letter_to_redesign}_neighbor.fasta"
+    # else:
+    #     file_name=f"{file_prefix}_{letter_to_redesign}.fasta"
+    SeqIO.write(records, file_name , "fasta")
 
 @memory.cache(ignore=['mpnn_model'])
 def mpnn_probs_bits(mpnn_model, pdb_path, ref_seq, conditional_probs_only, temperature=0.1, exclude_letter=None, include_aa_column=False):
