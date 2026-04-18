@@ -1,4 +1,4 @@
-name: ec19_env
+name: ec19_science
 channels:
   - conda-forge
   - pytorch
@@ -18,11 +18,11 @@ dependencies:
   - matplotlib>=3.8,<3.10
 
   # ML frameworks
-  - pytorch=2.0.1
-  - pytorch-cuda=11.8
-  - jax=0.4.35
-  - jaxlib=0.4.35
-  - cuda-nvcc
+  # - pytorch=2.0.1
+  # - pytorch-cuda=11.8
+  # - jax=0.4.35
+  # - jaxlib=0.4.35
+  # - cuda-nvcc
 
   # Bio / structure
   - biopython=1.84
@@ -31,6 +31,6 @@ dependencies:
 
   # Pip-only packages
   - pip
-  - pip:
-      - fair-esm==2.0.0
-      - git+https://github.com/sokrypton/ColabDesign.git
+  # - pip:
+  #     - fair-esm==2.0.0
+  #     - git+https://github.com/sokrypton/ColabDesign.git

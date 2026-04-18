@@ -249,7 +249,7 @@ def main():
     output_path = path.join(output_dir, args.outfile)
     save_designs_fasta(final_designs, output_path, 'I', target_genes)
     logger = logging.getLogger(__name__)
-    logger.info(f"Saved {len(final_designs)} designs to {output_path}.fasta")
+    logger.info(f"Saved {len(final_designs)} designs to {output_path}")
 
 
 if __name__ == '__main__':
