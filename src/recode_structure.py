@@ -338,7 +338,7 @@ def generate_mpnn_designs(data_root, code_root, gene_name, uniprot_id, reference
     mpnn_seqs, mpnn_scores = compute_mpnn_seqs(pdb_path, mpnn_model, mpnn_designs_num, dataset, chain_id_dict,
         fixed_positions, omit_AA, temp=temp, override_seq=starting_seq)
 
-    return [{'uniprot_id': uniprot_id, 'gene': gene_name, 'seq': seq, 'include_neighbors': include_neighbors, 'temp': temp}
+    return [{'uniprot_id': uniprot_id, 'gene': gene_name, 'seq': seq, 'include_neighbors': include_neighbors, 'temp': temp,'spatial_neighbors': spatial_neighbors}
             for seq in mpnn_seqs]
 
 def load_target_genes(kind, data_root):
@@ -459,6 +459,7 @@ def score_designs(data_root, code_root, gene_name, uniprot_id, reference_seq, le
     if method == 'mpnn':
         try:
             mpnn_designs_df = pd.read_csv(path.join(data_root, 'output/recode_designs/designs_mpnn.csv'))
+            mpnn_designs_df = mpnn_designs_df[mpnn_designs_df.spatial_neighbors == spatial_neighbors]
             mpnn_designs_df = mpnn_designs_df[mpnn_designs_df.uniprot_id == uniprot_id]
             mpnn_seqs = mpnn_designs_df[mpnn_designs_df.include_neighbors == True].seq.values
             mpnn_seqs_no_n = mpnn_designs_df[mpnn_designs_df.include_neighbors == False].seq.values
