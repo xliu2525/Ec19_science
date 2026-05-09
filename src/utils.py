@@ -269,24 +269,10 @@ def get_interacting_residues_from_structure(
     coords = get_aligned_residue_coords(aligned_af_seq, unaligned_coords)
     return get_indices_of_interacting_residues(seq, coords, mask, min_dist_thresh, max_dist_thresh)
 
-def get_interacting_indices_from_confind(structures_dir: str, uniprot: str,confind_dir: str, output_dir: str,
-                                          cutoff=0.1):
+def get_interacting_indices_from_confind(confind_dir: str, uniprot: str, cutoff: float):
     # Get the positions (PDB, 1-based) of residues close to chain X, ILE positions
-    pdb_path = os.path.join(structures_dir, f"{uniprot}_nearby_protein_I.pdb")
-    os.makedirs(output_dir,exist_ok=True)
     
-    output_path=f"{output_dir}/{uniprot}_confind.txt"
-    
-    if os.path.exists(output_path):
-        print("Skipping computing confind for", uniprot, "- file already exists")
-    else:
-        cmd = [
-            f"{confind_dir}/confind",
-            "--p", pdb_path,
-            "--o", output_path,
-            "--rLib", f"{confind_dir}/rotlibs/DB-2010/"
-        ]
-        subprocess.run(cmd, check=True)
+    output_path=os.path.join(confind_dir, f"{uniprot}_nearby_protein_I.txt")
     
     # Then process the data frame
     df = pd.read_csv(output_path, sep="\t",header=None,names=["contact","res1","res2","prob","aa1","aa2"])
@@ -312,8 +298,8 @@ def get_interacting_indices_from_confind(structures_dir: str, uniprot: str,confi
     #   .head(top_to_take)
     # )
 
-    neighbors_from_res1 = df.loc[df["aa1"] == "ILE", "res2_index"].dropna().tolist()
-    neighbors_from_res2 = df.loc[df["aa2"] == "ILE", "res1_index"].dropna().tolist()
+    neighbors_from_res1 = df.loc[(df["aa1"] == "ILE") & (df["aa2"]!="ILE"), "res2_index"].dropna().tolist()
+    neighbors_from_res2 = df.loc[(df["aa2"] == "ILE") & (df["aa1"]!="ILE"), "res1_index"].dropna().tolist()
 
     neighbor_PDB_idx = sorted(set(neighbors_from_res1 + neighbors_from_res2))
     return neighbor_PDB_idx

@@ -85,6 +85,14 @@ if __name__ == '__main__':
         help="Directory containing PDB structures of wild-type genes. "
             "Required when using spatial neighbors for recoding."
     )
+    
+    parser.add_argument(
+        "--confind_dir", 
+        type=str,
+        default=None,
+        help="Directory containing confind output "
+            "Required when using confind neighbors for recoding."
+    )
 
     # Masking strategies
     parser.add_argument(
@@ -107,6 +115,13 @@ if __name__ == '__main__':
         default=False,
         help="If set, recodes residues that show evolutionary covariance with the target residue."
     )
+    
+    parser.add_argument(
+        "--confind_neighbors",
+        action="store_true",
+        default=False,
+        help="If set, recodes residues that are close to the target residue defined using Confind method."
+    )
 
     # 3D distance thresholds
     parser.add_argument(
@@ -121,6 +136,13 @@ if __name__ == '__main__':
         type=float,
         default=4.0,
         help="Maximum spatial distance (in Angstroms) to define 3D neighbors."
+    )
+    
+    parser.add_argument(
+        "--confind_cutoff",
+        type=float,
+        default=0.1,
+        help="Confind threshold to define neighbors."
     )
 
     # Mutation tracking
@@ -172,6 +194,7 @@ if __name__ == '__main__':
         seq_file=args.infile,
         msa_dir=args.msa_dir,
         structure_dir=args.structure_dir,
+        confind_dir=args.confind_dir,
         residue_to_recode=args.residue, 
         model=model, 
         alphabet=alphabet, 
@@ -179,8 +202,10 @@ if __name__ == '__main__':
         incl_seq_neighbors=args.seq_neighbors, 
         incl_3d_neighbors=args.spatial_neighbors, 
         incl_evo_neighbors=args.evo_neighbors,
+        incl_confind_neighbors=args.confind_neighbors,
         min_3d_dist=args.min_3d_dist,
         max_3d_dist=args.max_3d_dist,
+        confind_cutoff=args.confind_cutoff,
         save_muts = args.save_muts
         )
 

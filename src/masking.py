@@ -11,6 +11,7 @@ class Masking:
     def __init__(
         self,
         structure_dir: Union[os.PathLike, None],
+        confind_dir: Union[os.PathLike, None],
         id_to_recode: str,
         residue_to_recode: str,
         mask_id: str,
@@ -18,8 +19,10 @@ class Masking:
         incl_seq_neighbors: bool,
         incl_3d_neighbors: bool,
         incl_evo_neighbors: bool,
+        incl_confind_neighbors: bool,
         min_3d_dist: float,
-        max_3d_dist: float
+        max_3d_dist: float,
+        confind_cutoff: float
     ):
         """
         Implements masking strategies for sampling designs from protein language models.
@@ -57,6 +60,7 @@ class Masking:
                 Maximum spatial distance (in Angstroms) to define 3D neighbors.
         """
         self.structure_dir = structure_dir
+        self.confind_dir = confind_dir
         self.id_to_recode = id_to_recode
         self.residue_to_recode = residue_to_recode
         self.mask_id = mask_id
@@ -64,8 +68,10 @@ class Masking:
         self.incl_seq_neighbors = incl_seq_neighbors
         self.incl_3d_neighbors = incl_3d_neighbors
         self.incl_evo_neighbors = incl_evo_neighbors
+        self.incl_confind_neighbors = incl_confind_neighbors
         self.min_3d_dist = min_3d_dist
         self.max_3d_dist = max_3d_dist
+        self.confind_cutoff = confind_cutoff
     
     def mask_token_id(self, toks: torch.Tensor, must_mask: torch.Tensor) -> torch.Tensor:
         return toks * (1 - must_mask) + self.mask_id * must_mask
@@ -80,14 +86,20 @@ class Masking:
     def mask_3d_neighbors_in_seq_batch(self, must_mask: torch.Tensor, target_res_mask: torch.Tensor, labels: List[str], seqs: List[str], start_offset: int):
         for i, (label, seq) in enumerate(zip(labels, seqs)):
             uniprot = label.split('|')[0].split("_")[0]
-            # interacting_pos = get_interacting_residues_from_structure(
-            #     self.structure_dir, uniprot, seq, target_res_mask[i][start_offset:len(seq)+1], self.min_3d_dist, self.max_3d_dist
-            #     )
-            neighboring_PDB_idx=get_interacting_indices_from_confind(self.structure_dir, uniprot,
-                                                                     confind_dir="/home/ubuntu/bin/confind-msl-bin", 
-                                                                     output_dir="Confind/")
+            interacting_pos = get_interacting_residues_from_structure(
+                self.structure_dir, uniprot, seq, target_res_mask[i][start_offset:len(seq)+1], self.min_3d_dist, self.max_3d_dist
+                )
+            # add selected interacting residues to original mask
+            print(f"3D neighbors: {interacting_pos}")
+            for res_idx in interacting_pos:
+                must_mask[i][res_idx + start_offset] = 1
+        return must_mask
+    
+    def mask_confind_neighbors_in_seq_batch(self, must_mask: torch.Tensor, labels: List[str], seqs: List[str], start_offset: int):
+        for i, (label, seq) in enumerate(zip(labels, seqs)):
+            uniprot = label.split('|')[0].split("_")[0]
+            neighboring_PDB_idx=get_interacting_indices_from_confind(self.confind_dir, uniprot, self.confind_cutoff)
             interacting_pos=map_pdb_to_full_seq_idx(neighboring_PDB_idx,self.structure_dir,uniprot,seq)
-            print(interacting_pos)
             # add selected interacting residues to original mask
             print(f"3D neighbors: {interacting_pos}")
             for res_idx in interacting_pos:
@@ -148,7 +160,11 @@ class Masking:
         if self.incl_3d_neighbors:
             must_mask = self.mask_3d_neighbors_in_seq_batch(must_mask, target_res_must_mask, labels, seqs, start_offset)
 
+        if self.incl_confind_neighbors:
+            must_mask = self.mask_confind_neighbors_in_seq_batch(must_mask, labels, seqs, start_offset)
+            
         must_mask = self.fix_mask(toks, must_mask)
+        print(must_mask)
         return self.mask_token_id(toks, must_mask)
     
     def do_masking_in_msa_seq(

@@ -19,6 +19,7 @@ class EsmRecoder:
         seq_file: os.PathLike,
         msa_dir: Union[os.PathLike, None],
         structure_dir: Union[os.PathLike, None],
+        confind_dir: Union[os.PathLike, None],
         residue_to_recode: str,
         model: esm.model,
         alphabet: esm.data.Alphabet,
@@ -26,13 +27,16 @@ class EsmRecoder:
         incl_seq_neighbors: bool,
         incl_3d_neighbors: bool,
         incl_evo_neighbors: bool,
+        incl_confind_neighbors: bool,
         min_3d_dist: int,
         max_3d_dist: int,
+        confind_cutoff: float,
         save_muts: bool
     ):
         self.seq_file = seq_file
         self.msa_dir = msa_dir
         self.structure_dir = structure_dir
+        self.confind_dir = confind_dir
         self.device = device
         self.alphabet = alphabet
         self.model = model.eval().to(device)
@@ -50,6 +54,7 @@ class EsmRecoder:
 
         self.masking = Masking(
             self.structure_dir,
+            self.confind_dir,
             self.id_to_recode,
             self.residue_to_recode, 
             self.mask_id,
@@ -57,8 +62,10 @@ class EsmRecoder:
             incl_seq_neighbors, 
             incl_3d_neighbors, 
             incl_evo_neighbors, 
+            incl_confind_neighbors,
             min_3d_dist,
             max_3d_dist,
+            confind_cutoff
         )
 
     def zero_out_undesired_logits(self, logits):
