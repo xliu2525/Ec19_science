@@ -214,7 +214,7 @@ def compute_protein_scores(data_root: str, seqs_by_lib: Dict[str,str], methods: 
 
     return df
 
-def find_nearby_res(pdb_path, target_chain, recode_positions, spatial_neighbor, include_neighbors=True):
+def find_nearby_res(pdb_path, target_chain, recode_positions, spatial_neighbors, confind_neighbors, confind_dir, confind_cutoff, include_neighbors=True):
     pdb = atomium.open(pdb_path)
     pdb.model.optimise_distances()
 
@@ -223,7 +223,7 @@ def find_nearby_res(pdb_path, target_chain, recode_positions, spatial_neighbor, 
     all_residues = list(target_c.residues())
     chain_neighbor_indices = set()
     
-    if spatial_neighbor:
+    if confind_neighbors:
         structures_dir = os.path.dirname(pdb_path)
         filename = os.path.basename(pdb_path)
 
@@ -232,12 +232,9 @@ def find_nearby_res(pdb_path, target_chain, recode_positions, spatial_neighbor, 
         # extract uniprot (before first underscore)
         uniprot = name.split("_")[0]
         # Use Confind (already 1-based)
-        nearby_res_index=set(get_interacting_indices_from_confind(structures_dir, uniprot,
-                                                            confind_dir="/home/ubuntu/bin/confind-msl-bin", 
-                                                            output_dir="Confind/",cutoff=0.01))
+        nearby_res_index=get_interacting_indices_from_confind(confind_dir, uniprot,confind_cutoff)
 
         #nearby_res_index=np.where((dists>=min_3d_dist) & (dists<=max_3d_dist))[0]+1
-        print(nearby_res_index)
         chain_neighbor_indices.update(nearby_res_index) 
             
     for res in target_c.residues():      
@@ -250,24 +247,27 @@ def find_nearby_res(pdb_path, target_chain, recode_positions, spatial_neighbor, 
             if res_index > 1:
                 chain_neighbor_indices.add(res_index-1)
         
-        # nearby_res_by_distance = {}
-        # atoms = res.nearby_atoms(redesign_radius)
-        # for atom in atoms:
-        #     if atom.chain.id != target_c.id:
-        #         continue
-        #     nearby_res = atom.het
-        #     nearby_res_index = all_residues.index(nearby_res)+1
-        #     if abs(nearby_res_index - res_index) < 6:
-        #         continue
-                
-        #     distance = min([atom.distance_to(r_atom) for r_atom in res.atoms()])
-        #     if distance < nearby_res_by_distance.get(nearby_res_index, np.inf):
-        #         nearby_res_by_distance[nearby_res_index] = distance
-                
-        # # Find closest residues
-        # sorted_by_distance = sorted(list(nearby_res_by_distance.items()), key=lambda kv: kv[1])
-        # top = [k for k, v in sorted_by_distance[:top_to_take]]
-        # chain_neighbor_indices.update(top)                
+        if spatial_neighbors:
+            redesign_radius=5
+            top_to_take=2
+            nearby_res_by_distance = {}
+            atoms = res.nearby_atoms(redesign_radius)
+            for atom in atoms:
+                if atom.chain.id != target_c.id:
+                    continue
+                nearby_res = atom.het
+                nearby_res_index = all_residues.index(nearby_res)+1
+                if abs(nearby_res_index - res_index) < 6:
+                    continue
+                    
+                distance = min([atom.distance_to(r_atom) for r_atom in res.atoms()])
+                if distance < nearby_res_by_distance.get(nearby_res_index, np.inf):
+                    nearby_res_by_distance[nearby_res_index] = distance
+                    
+            # Find closest residues
+            sorted_by_distance = sorted(list(nearby_res_by_distance.items()), key=lambda kv: kv[1])
+            top = [k for k, v in sorted_by_distance[:top_to_take]]
+            chain_neighbor_indices.update(top)                
 
     # if first residue has code 'M', remove it from the chain_neighbor_indices
     if all_residues[0].code == 'M':      
@@ -278,7 +278,8 @@ def find_nearby_res(pdb_path, target_chain, recode_positions, spatial_neighbor, 
     return sorted(chain_neighbor_indices)
 
 def prepare_multichain_dataset(pdb_path, letter_to_redesign, target_chain, fixed_chains_list, include_contacts, 
-                               spatial_neighbors, include_neighbors=True, recode_positions=None,
+                               spatial_neighbors, confind_neighbors, confind_dir, confind_cutoff,
+                               include_neighbors=True, recode_positions=None,
                                starting_seq=None):
     if include_contacts:
         fixed_chains = ",".join(fixed_chains_list)
@@ -291,9 +292,10 @@ def prepare_multichain_dataset(pdb_path, letter_to_redesign, target_chain, fixed
     dlog(recode_positions,v=1)
     if recode_positions == None:
         recode_positions = [i+1 for i, c in enumerate(list(starting_seq)) if c == letter_to_redesign]
-    if spatial_neighbors:
+    if spatial_neighbors or confind_neighbors:
         nearby_positions = find_nearby_res(pdb_path, target_chain, recode_positions, 
-                                           spatial_neighbors, include_neighbors)
+                                           spatial_neighbors, confind_neighbors, confind_dir, confind_cutoff,
+                                           include_neighbors)
         recode_positions = sorted(list(set(recode_positions) | set(nearby_positions)))
 
     fixed_positions = [i+1 for i, c in enumerate(list(starting_seq)) if (i+1) not in recode_positions]
@@ -310,7 +312,7 @@ def prepare_multichain_dataset(pdb_path, letter_to_redesign, target_chain, fixed
 
 
 def generate_mpnn_designs(data_root, code_root, gene_name, uniprot_id, reference_seq, letter_to_redesign,
-    include_neighbors, temp, mpnn_designs_num, spatial_neighbors, config_version=None):
+    include_neighbors, temp, mpnn_designs_num, spatial_neighbors,confind_neighbors, confind_dir, confind_cutoff, config_version=None):
     pdb_name = f"{uniprot_id}_nearby_protein_{letter_to_redesign}"
     pdb_path = path.join(data_root, f"{pdb_name}.pdb")
     target_chain = "X"
@@ -332,13 +334,14 @@ def generate_mpnn_designs(data_root, code_root, gene_name, uniprot_id, reference
 
     dataset, chain_id_dict, fixed_positions, omit_AA, positions_to_redesign = prepare_multichain_dataset(
         pdb_path, letter_to_redesign, target_chain, fixed_chains_list, include_contacts=True,
-        spatial_neighbors=spatial_neighbors, include_neighbors=include_neighbors,
+        spatial_neighbors=spatial_neighbors, confind_neighbors=confind_neighbors, confind_dir=confind_dir, confind_cutoff=confind_cutoff, 
+        include_neighbors=include_neighbors,
         starting_seq=starting_seq, recode_positions=recode_positions)
 
     mpnn_seqs, mpnn_scores = compute_mpnn_seqs(pdb_path, mpnn_model, mpnn_designs_num, dataset, chain_id_dict,
         fixed_positions, omit_AA, temp=temp, override_seq=starting_seq)
 
-    return [{'uniprot_id': uniprot_id, 'gene': gene_name, 'seq': seq, 'include_neighbors': include_neighbors, 'temp': temp,'spatial_neighbors': spatial_neighbors}
+    return [{'uniprot_id': uniprot_id, 'gene': gene_name, 'seq': seq, 'include_neighbors': include_neighbors, 'temp': temp,'spatial_neighbors': spatial_neighbors, 'confind_neighbors':confind_neighbors}
             for seq in mpnn_seqs]
 
 def load_target_genes(kind, data_root):
@@ -414,7 +417,7 @@ def design_dir(data_root, version):
     else:
         return path.join(data_root, f"Recode_AF_MPNN_designs")
 
-def score_designs(data_root, code_root, gene_name, uniprot_id, reference_seq, letter_to_redesign, spatial_neighbors,mpnn_designs_num,
+def score_designs(data_root, code_root, gene_name, uniprot_id, reference_seq, letter_to_redesign, spatial_neighbors,confind_neighbors, confind_dir, confind_cutoff, mpnn_designs_num,
     multimer=False, single_chain=False, config_version=None, llm_designs=True, method='mpnn'):
     pdb_name = f"{uniprot_id}_nearby_protein_{letter_to_redesign}"
     pdb_path = path.join(data_root, f"{pdb_name}.pdb")
@@ -472,7 +475,7 @@ def score_designs(data_root, code_root, gene_name, uniprot_id, reference_seq, le
     # Setup dataset for MPNN scoring
     dataset, chain_id_dict, fixed_positions, omit_AA, positions_to_redesign = prepare_multichain_dataset(
         pdb_path, letter_to_redesign, target_chain, fixed_chains_list, include_contacts=True,
-        spatial_neighbors=spatial_neighbors, include_neighbors=False,
+        spatial_neighbors=spatial_neighbors, confind_neighbors=confind_neighbors, confind_dir=confind_dir, confind_cutoff=confind_cutoff, include_neighbors=False,
         starting_seq=starting_seq, recode_positions=recode_positions)
 
     if method == 'afdesign_mpnn_bias':

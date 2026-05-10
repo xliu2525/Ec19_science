@@ -41,7 +41,7 @@ def load_genes_from_fasta(fasta_file):
         genes.append({'gene': gene, 'uniprot_id': uniprot_id, 'full_seq': str(record.seq)})
     return pd.DataFrame(genes)
 
-def generate_designs(target_genes, method, gpus, output_dir, data_root, code_root, num_designs, spatial_neighbors, quick=False):
+def generate_designs(target_genes, method, gpus, output_dir, data_root, code_root, num_designs, spatial_neighbors, confind_neighbors, confind_dir, confind_cutoff, quick=False):
     context = create_context(code_root, data_root, gpus)
     arguments = []
 
@@ -83,7 +83,7 @@ def generate_designs(target_genes, method, gpus, output_dir, data_root, code_roo
                 for temp in temps:
                     arguments.append((context, row.gene, row.uniprot_id, row.full_seq, 'I',
                                     include_neighbors, temp, num_per_config, 
-                                    spatial_neighbors, None))
+                                    spatial_neighbors, confind_neighbors, confind_dir, confind_cutoff, None))
 
         with multiprocessing.get_context('spawn').Pool(len(gpus)) as pool:
             results = pool.starmap(generate_mpnn_designs_parallel, arguments, 1)
@@ -109,9 +109,9 @@ def generate_designs(target_genes, method, gpus, output_dir, data_root, code_roo
 
     return designs_df
 
-def score_all_designs(target_genes, gpus, output_dir, data_root, code_root, num_designs, spatial_neighbors, method):
+def score_all_designs(target_genes, gpus, output_dir, data_root, code_root, num_designs, spatial_neighbors, confind_neighbors, confind_dir, confind_cutoff, method):
     context = create_context(code_root, data_root, gpus)
-    arguments = [(context, row.gene, row.uniprot_id, row.full_seq, 'I', spatial_neighbors, num_designs, False, False, None, False, method)
+    arguments = [(context, row.gene, row.uniprot_id, row.full_seq, 'I', spatial_neighbors,  confind_neighbors, confind_dir, confind_cutoff, num_designs, False, False, None, False, method)
                  for _, row in target_genes.iterrows()]
 
     with multiprocessing.get_context('spawn').Pool(len(gpus)) as pool:
@@ -200,7 +200,10 @@ def main():
     parser.add_argument('--method', choices=['mpnn', 'afdesign_mpnn_bias'], required=True, help='Design method to use')
     parser.add_argument('--dry_run', action='store_true', help='Generate minimal designs for testing')
     parser.add_argument('--data_dir', default='.', help='Data directory for input and output (default: current directory)')
-    parser.add_argument('--spatial_neighbors', action="store_true", default=False, help='If set, recodes residues that are spatially close to the target residue in the PDB structure using confind.')
+    parser.add_argument('--spatial_neighbors',action="store_true",default=False,help="If set, recodes residues that are close to the target residue in the PDB structure using distance.")
+    parser.add_argument('--confind_neighbors', action="store_true", default=False, help='If set, recodes residues that are close to the target residue in the PDB structure using confind.')
+    parser.add_argument('--confind_dir',type=str,default='.',help="Directory of Confind output")
+    parser.add_argument('--confind_cutoff',type=float,default=0.1,help="confind cutoff")
     parser.add_argument('--outfile', help='Output file name')
     args = parser.parse_args()
 
@@ -234,9 +237,9 @@ def main():
 
     num_designs = 2 if args.dry_run else 12
     designs_df = generate_designs(target_genes, args.method, gpus, output_dir, data_root, code_root, num_designs, 
-                                  args.spatial_neighbors, quick=args.dry_run)
+                                  args.spatial_neighbors, args.confind_neighbors,args.confind_dir,args.confind_cutoff, quick=args.dry_run)
     results_df = score_all_designs(target_genes, gpus, output_dir, data_root, code_root, num_designs, 
-                                   args.spatial_neighbors, args.method)
+                                   args.spatial_neighbors, args.confind_neighbors,args.confind_dir,args.confind_cutoff, args.method)
 
     if args.method == 'mpnn':
         final_designs = rank_mpnn_designs(results_df, target_genes, designs_df)
