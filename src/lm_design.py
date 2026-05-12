@@ -273,106 +273,143 @@ class MaxLogLikelihoodEsmRecoder(EsmRecoder):
         return left_to_right_designs
 
 
-class GibbsEsmRecoder(EsmRecoder):  # TODO: check code for sampling
-    def _compute_seq_pseudo_log_likelihood(self, toks: torch.Tensor, mask_pos: List):
-        mask_logprobs = []
+class GibbsEsmRecoder(EsmRecoder):
+    
+    def update_one_sequence(self, current_toks: torch.LongTensor, mask_pos,random_order=True):
+        
+        if random_order:
+            mask_pos=mask_pos[torch.randperm(len(mask_pos))]
+
         for idx in mask_pos:
-            tok_to_predict = toks[idx]
-
-            # [N_res]
-            masked_toks = toks.clone()
-            masked_toks[idx] = self.alphabet.mask_idx
-
-            # [1, N_res]
-            masked_toks = torch.unsqueeze(masked_toks, 0).to(self.device)
-
-            # [1, N_res, N_vocab]
-            logits = self.model(masked_toks, repr_layers=[33], return_contacts=False)['logits'].cpu()
+            
+            # Temporarily mask this position
+            old_tok=current_toks[idx].item()
+            current_toks[idx]=self.mask_id
+            
+            # recode one mask at a time
+            logits = self.model(current_toks.unsqueeze(0).to(self.device), repr_layers=[33], return_contacts=False)['logits'].cpu()
 
             # [N_res, N_vocab]
-            logits = torch.squeeze(logits, 0)
+            logits = torch.squeeze(logits, 0)   
+            #print(logits.shape)
 
             # [N_vocab]
-            logprobs = torch.log_softmax(logits[idx], dim=-1)
+            tok_logits = self.zero_out_undesired_logits(logits[idx])
+            #print(tok_logits)
+            # new_tok = np.argmax(tok_logits)
 
-            mask_logprob = logprobs[tok_to_predict]
+            # Instead of taking argmax, we sample from the distribution
+            probs = torch.softmax(tok_logits, dim=-1)
+            new_tok=torch.multinomial(probs,num_samples=1).item()
+
+            current_toks[idx]=new_tok
+
+        # [N_res]
+        return current_toks
+    
+    def _compute_seq_pseudo_log_likelihood(self, toks: torch.Tensor, mask_pos: torch.Tensor):
+        mask_logprobs = []
+        
+        # Make sure toks is on the model device once
+        toks = toks.to(self.device)
+        
+        # Iterate through each mask position
+        for idx in mask_pos:
+            tok_to_predict=toks[:,idx]
+
+            # [N, N_res]
+            masked_toks = toks.clone()
+            masked_toks[:,idx] = self.alphabet.mask_idx
+            masked_toks = masked_toks.to(self.device)
+
+            # [N, N_res, N_vocab]
+            logits = self.model(masked_toks, repr_layers=[33], return_contacts=False)['logits']
+
+            # [N, N_vocab]
+            logprobs = torch.log_softmax(logits[:,idx,:], dim=-1)
+
+            mask_logprob=logprobs.gather(dim=1,index=tok_to_predict.unsqueeze(1))
             mask_logprobs.append(mask_logprob)
+            
             del masked_toks
+        
+        # [N, N_mask]
+        mask_logprobs_array=torch.cat(mask_logprobs,dim=1)
 
-        return np.mean(mask_logprobs)
+        return mask_logprobs_array.mean(dim=1) # [N]
 
     def _select_seq_with_closest_score_to_wild_type(self, ref_score: float, new_scores: List[float], seqs: List[str]):
-        diffs = [abs(ref_score - new_pll) for new_pll in new_scores]
-        return seqs[np.argmin(diffs)]
+        diffs = torch.abs(new_scores - ref_score)
+        best_idx = torch.argmin(diffs).item()
+        return seqs[best_idx]
 
     def _select_seq_with_highest_score(self, new_scores: List[float], seqs: List[str]):
-        return seqs[np.argmax(new_scores)]
+        return seqs[torch.argmax(new_scores).item()]
 
     def recode_sequences(self, **kwargs) -> Dict[str, str]:
+        torch.manual_seed(23)
         designs = {}
         torch.set_grad_enabled(False)
         dataloader = kwargs['dataloader']
-        iteration_multiplier = 50
-        burn_in_multiplier = 5
+        iteration_multiplier = 10
+        burn_in_multiplier = 2
 
         for batch_idx, (batch_labels, batch_seqs, batch_toks) in tqdm.tqdm(
                 enumerate(dataloader), total=len(dataloader), desc='Processing batches.'
         ):
-            for label, seq, toks in zip(batch_labels, batch_seqs, batch_toks):
-                if self.id_to_recode not in toks:
+            if ("muts" in batch_labels[0]) and ("worst" in batch_labels[0]):
+                recode_from_prev_design = True
+            else:
+                recode_from_prev_design = False
+                
+            batch_masked_toks = self.masking.do_masking_in_batch_seqs(
+                batch_toks, batch_labels, batch_seqs, recode_from_prev_design, self.alphabet, self.start_offset
+            )
+            
+            for label, seq, toks, masked_toks in zip(batch_labels, batch_seqs, batch_toks, batch_masked_toks):
+                I_idx=[i for i, aa in enumerate(seq) if aa=="I"]
+                print(f"{len(I_idx)} ILE positions in seq: {I_idx}")
+                
+                if self.mask_id not in masked_toks:
                     continue
-
                 if ("muts" in label) and ("worst" in label):
                     recode_from_prev_design = True
                 else:
                     recode_from_prev_design = False
 
-                sampled_sequences, sampled_log_likelihoods = [], []
+                sampled_sequences = []
 
                 # [N_res]
-                mask_pos = np.where(toks == self.id_to_recode)[0].tolist() # TODO: implement neighbor recoding
+                mask_pos=torch.where(masked_toks==self.mask_id)[0]
+                print(f"Mask position: {mask_pos}")
                 mask_count = len(mask_pos)
                 total_iterations = mask_count * iteration_multiplier
                 burn_in_iterations = mask_count * burn_in_multiplier
 
                 # [N_res]
-                toks = toks.to(self.device)
+                #toks = toks.to(self.device)
 
                 # compute wild type pseudo log likelihood (PLL)
-                wt_pll = self._compute_seq_pseudo_log_likelihood(toks=toks, mask_pos=mask_pos)
+                wt_pll = self._compute_seq_pseudo_log_likelihood(toks=toks.unsqueeze(0), mask_pos=mask_pos)
 
+                # Concatenate all sampled toks
+                sampled_toks_list=[]
                 for i in range(total_iterations):
-                    new_tok = np.nan
-                    idx = random.choice(mask_pos)
-                    toks[idx] = self.mask_id
+                    print(i)
+                    toks=self.update_one_sequence(toks,mask_pos)
 
-                    # [1, N_res]
-                    toks = torch.unsqueeze(toks, 0)
-
-                    # [1, N_res, N_vocab]
-                    logits = self.model(toks, repr_layers=[33], return_contacts=False)['logits'].cpu()
-
-                    # [N_res, N_vocab]
-                    logits = torch.squeeze(logits, 0)
-
-                    # [N_res]
-                    toks = torch.squeeze(toks, 0)
-
-                    logits[idx] = self.zero_out_undesired_logits(logits[idx])
-                    # TODO: what? argmax? shouldn't it be random.choice(, p=logits)
-                    new_tok = np.argmax(logits[idx])
-                    toks[idx] = new_tok
-
-                    if (i + 1 > burn_in_iterations) and (total_iterations % mask_count == 0):
+                    if i + 1 > burn_in_iterations:
+                        sampled_toks_list.append(toks)
                         # Decode
                         new_seq = self.convert_toks_to_seq(toks)
                         sampled_sequences.append(new_seq)
 
-                        # compute new seq pseudo log likelihood
-                        # TODO: only do at the end, to parallelize operations
-                        new_seq_pll = self._compute_seq_pseudo_log_likelihood(toks=toks, mask_pos=mask_pos)
-                        sampled_log_likelihoods.append(new_seq_pll)
-
+                # [N, N_res]
+                sampled_toks=torch.stack(sampled_toks_list,dim=0)
+                
+                # compute new seq pseudo log likelihood
+                sampled_log_likelihoods = self._compute_seq_pseudo_log_likelihood(toks=sampled_toks, mask_pos=mask_pos)
+                
                 # Save sequences with highest PLL, and closest PLL to wild type PLL
                 seq_with_closest_pll = self._select_seq_with_closest_score_to_wild_type(
                     ref_score=wt_pll, new_scores=sampled_log_likelihoods, seqs=sampled_sequences)
