@@ -351,8 +351,11 @@ class GibbsEsmRecoder(EsmRecoder):
         designs = {}
         torch.set_grad_enabled(False)
         dataloader = kwargs['dataloader']
-        iteration_multiplier = 10
-        burn_in_multiplier = 2
+        # iteration_multiplier = 10
+        # burn_in_multiplier = 2
+        #mask_count = len(mask_pos)
+        total_iterations = 50 #mask_count * iteration_multiplier
+        burn_in_iterations = 5 #mask_count * burn_in_multiplier
 
         for batch_idx, (batch_labels, batch_seqs, batch_toks) in tqdm.tqdm(
                 enumerate(dataloader), total=len(dataloader), desc='Processing batches.'
@@ -382,9 +385,6 @@ class GibbsEsmRecoder(EsmRecoder):
                 # [N_res]
                 mask_pos=torch.where(masked_toks==self.mask_id)[0]
                 print(f"Mask position: {mask_pos}")
-                mask_count = len(mask_pos)
-                total_iterations = mask_count * iteration_multiplier
-                burn_in_iterations = mask_count * burn_in_multiplier
 
                 # [N_res]
                 #toks = toks.to(self.device)
@@ -395,7 +395,7 @@ class GibbsEsmRecoder(EsmRecoder):
                 # Concatenate all sampled toks
                 sampled_toks_list=[]
                 for i in range(total_iterations):
-                    print(i)
+                    #print(i)
                     toks=self.update_one_sequence(toks,mask_pos)
 
                     if i + 1 > burn_in_iterations:
