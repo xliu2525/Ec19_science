@@ -151,11 +151,17 @@ class SimultaneousEsmRecoder(EsmRecoder):
 
 class AutoregressiveEsmRecoder(EsmRecoder):
 
-    def _recode_one_sequence(self, masked_toks: torch.LongTensor):
-        mask_count = (masked_toks == self.mask_id).sum().item()
+    def _recode_one_sequence(self, toks: torch.LongTensor, recode_positions):
+        # toks: original (unmasked) tokens [L]
+        # recode_positions: A list of positions to mask one at a time
+        
+        #mask_count = (masked_toks == self.mask_id).sum().item()
+        masked_toks=toks.clone()
 
         # Infer on one masked token a a time
-        for _ in range(mask_count):
+        for i in recode_positions:
+            # Mask ith position
+            masked_toks[i]=self.mask_id
 
             # [1, N_res, N_vocab]
             logits = self.model(masked_toks.unsqueeze(0).to(self.device), repr_layers=[33], return_contacts=False)['logits'].cpu()
@@ -163,13 +169,13 @@ class AutoregressiveEsmRecoder(EsmRecoder):
             # [N_res, N_vocab]
             logits = torch.squeeze(logits, 0)
 
-            idx = masked_toks.tolist().index(self.mask_id)
+            #idx = masked_toks.tolist().index(self.mask_id)
 
             # [N_vocab]
-            tok_logits = self.zero_out_undesired_logits(logits[idx])
+            tok_logits = self.zero_out_undesired_logits(logits[i])
             new_tok = np.argmax(tok_logits)
 
-            masked_toks[idx] = new_tok
+            masked_toks[i] = new_tok
 
         # [N_res]
         return masked_toks
@@ -189,9 +195,9 @@ class AutoregressiveEsmRecoder(EsmRecoder):
                 recode_from_prev_design = False
 
             # [*, N_res]
-            batch_masked_toks = self.masking.do_masking_in_batch_seqs(
-                batch_toks, batch_labels, batch_seqs, recode_from_prev_design, self.alphabet, self.start_offset
-            )
+            # batch_masked_toks = self.masking.do_masking_in_batch_seqs(
+            #     batch_toks, batch_labels, batch_seqs, recode_from_prev_design, self.alphabet, self.start_offset
+            # )
 
             #if not is_left_to_right:
                 # TODO: only flip tokens between <cls> (idx:0) and <eos> (idx: 2)
@@ -199,16 +205,20 @@ class AutoregressiveEsmRecoder(EsmRecoder):
                 #batch_masked_toks = batch_masked_toks.flip(dims=[-1])
 
             # Infer one sequence at a time
-            for label, seq, masked_toks in zip(batch_labels, batch_seqs, batch_masked_toks):
-                if self.mask_id not in masked_toks:
-                    continue
+            for label, seq, toks in zip(batch_labels, batch_seqs, batch_toks):
+                # if self.mask_id not in masked_toks:
+                #     continue
 
                 if ("muts" in label) and ("worst" in label):
                     prefix = label.split('|')[0]
                 else:
                     prefix = label
+                    
+                # Find recode positions
+                recode_positions=torch.where(toks == self.id_to_recode)[0].tolist()
+                print(recode_positions)
 
-                predicted_toks = self._recode_one_sequence(masked_toks)
+                predicted_toks = self._recode_one_sequence(toks,recode_positions)
                 #if not is_left_to_right:
                     #predicted_toks = predicted_toks.flip(dims=[-1])
                 # Decode
