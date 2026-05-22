@@ -108,13 +108,17 @@ class Masking:
     
     def mask_3d_neighbors_in_msa_seq(self, must_mask: torch.Tensor, target_res_mask: torch.Tensor, label: str, seq: str, start_offset: int):
         uniprot = label.split('|')[0].split("_")[0]
-        # interacting_pos = get_interacting_residues_from_structure(
-        #     self.structure_dir, uniprot, seq, target_res_mask[0][start_offset:len(seq)+1], self.min_3d_dist, self.max_3d_dist
-        #     )
-        # add selected interacting residues to original mask
-        neighboring_PDB_idx=get_interacting_indices_from_confind(self.structure_dir, uniprot,
-                                                                     confind_dir="/home/ubuntu/bin/confind-msl-bin", 
-                                                                     output_dir="Confind/")
+        interacting_pos = get_interacting_residues_from_structure(
+            self.structure_dir, uniprot, seq, target_res_mask[0][start_offset:len(seq)+1], self.min_3d_dist, self.max_3d_dist
+            )
+        print(f"3D neighbors: {interacting_pos}")
+        for res_idx in interacting_pos:
+            must_mask[0][res_idx + start_offset] = 1
+        return must_mask
+    
+    def mask_confind_neighbors_in_msa_seq(self, must_mask: torch.Tensor, label: str, seq: str, start_offset: int):
+        uniprot = label.split('|')[0].split("_")[0]
+        neighboring_PDB_idx=get_interacting_indices_from_confind(self.confind_dir, uniprot, self.confind_cutoff)
         interacting_pos=map_pdb_to_full_seq_idx(neighboring_PDB_idx,self.structure_dir,uniprot,seq)
         print(f"3D neighbors: {interacting_pos}")
         for res_idx in interacting_pos:
@@ -198,5 +202,7 @@ class Masking:
         if self.incl_3d_neighbors:
             must_mask = self.mask_3d_neighbors_in_msa_seq(must_mask, target_res_must_mask, label, seq, start_offset)
         
+        if self.incl_confind_neighbors:
+            must_mask = self.mask_confind_neighbors_in_msa_seq(must_mask, label, seq, start_offset)
         must_mask = self.fix_mask(toks, must_mask)
         return self.mask_token_id(toks, must_mask)
