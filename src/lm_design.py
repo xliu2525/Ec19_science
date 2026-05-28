@@ -412,7 +412,9 @@ class GibbsEsmRecoder(EsmRecoder):
                     toks=self.update_one_sequence(toks,mask_pos)
 
                     if i + 1 > burn_in_iterations:
-                        sampled_toks_list.append(toks)
+                        # Important to add .clone() because tensor is mutable while string is not!
+                        # without .clone(), all sampled_toks_list will be the same sequence at the final state
+                        sampled_toks_list.append(toks.clone())
                         # Decode
                         new_seq = self.convert_toks_to_seq(toks)
                         sampled_sequences.append(new_seq)
