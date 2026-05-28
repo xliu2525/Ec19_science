@@ -195,9 +195,9 @@ class AutoregressiveEsmRecoder(EsmRecoder):
                 recode_from_prev_design = False
 
             # [*, N_res]
-            # batch_masked_toks = self.masking.do_masking_in_batch_seqs(
-            #     batch_toks, batch_labels, batch_seqs, recode_from_prev_design, self.alphabet, self.start_offset
-            # )
+            batch_masked_toks = self.masking.do_masking_in_batch_seqs(
+                batch_toks, batch_labels, batch_seqs, recode_from_prev_design, self.alphabet, self.start_offset
+            )
 
             #if not is_left_to_right:
                 # TODO: only flip tokens between <cls> (idx:0) and <eos> (idx: 2)
@@ -205,18 +205,21 @@ class AutoregressiveEsmRecoder(EsmRecoder):
                 #batch_masked_toks = batch_masked_toks.flip(dims=[-1])
 
             # Infer one sequence at a time
-            for label, seq, toks in zip(batch_labels, batch_seqs, batch_toks):
+            for label, seq, toks, masked_toks in zip(batch_labels, batch_seqs, batch_toks, batch_masked_toks):
                 # if self.mask_id not in masked_toks:
                 #     continue
 
+                ILE_pos=[i for i,aa in enumerate(seq) if aa=="I"]
+                print(f"ILE positions: {ILE_pos}")
+                
                 if ("muts" in label) and ("worst" in label):
                     prefix = label.split('|')[0]
                 else:
                     prefix = label
                     
                 # Find recode positions
-                recode_positions=torch.where(toks == self.id_to_recode)[0].tolist()
-                print(recode_positions)
+                recode_positions=torch.where(masked_toks == self.mask_id)[0].tolist()
+                print(f"Recode positions: {recode_positions}")
 
                 predicted_toks = self._recode_one_sequence(toks,recode_positions)
                 #if not is_left_to_right:
@@ -394,7 +397,7 @@ class GibbsEsmRecoder(EsmRecoder):
 
                 # [N_res]
                 mask_pos=torch.where(masked_toks==self.mask_id)[0]
-                print(f"Mask position: {mask_pos}")
+                print(f"Recode position: {mask_pos}")
 
                 # [N_res]
                 #toks = toks.to(self.device)

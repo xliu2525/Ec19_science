@@ -168,7 +168,7 @@ class Masking:
             must_mask = self.mask_confind_neighbors_in_seq_batch(must_mask, labels, seqs, start_offset)
             
         must_mask = self.fix_mask(toks, must_mask)
-        print(must_mask)
+        #print(must_mask)
         return self.mask_token_id(toks, must_mask)
     
     def do_masking_in_msa_seq(
