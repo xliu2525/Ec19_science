@@ -6,6 +6,7 @@ data_dir/
 **test**
 params/
 TMscore*
+data/
 
 *json
 *.txt
