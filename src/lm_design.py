@@ -219,7 +219,7 @@ class AutoregressiveEsmRecoder(EsmRecoder):
                     
                 # Find recode positions
                 recode_positions=torch.where(masked_toks == self.mask_id)[0].tolist()
-                print(f"Recode positions: {recode_positions}")
+                print(f"{len(recode_positions)} Recode positions: {recode_positions}")
 
                 predicted_toks = self._recode_one_sequence(toks,recode_positions)
                 #if not is_left_to_right:
@@ -288,8 +288,7 @@ class MaxLogLikelihoodEsmRecoder(EsmRecoder):
 
 class GibbsEsmRecoder(EsmRecoder):
     
-    def update_one_sequence(self, current_toks: torch.LongTensor, mask_pos,random_order=True):
-        
+    def update_one_sequence(self, current_toks: torch.LongTensor, mask_pos, temp, random_order=True):
         if random_order:
             mask_pos=mask_pos[torch.randperm(len(mask_pos))]
 
@@ -308,11 +307,13 @@ class GibbsEsmRecoder(EsmRecoder):
 
             # [N_vocab]
             tok_logits = self.zero_out_undesired_logits(logits[idx])
-            #print(tok_logits)
             # new_tok = np.argmax(tok_logits)
+            
+            # Adjust logits based on temperature
+            scaled_tok_logits=tok_logits/temp
 
             # Instead of taking argmax, we sample from the distribution
-            probs = torch.softmax(tok_logits, dim=-1)
+            probs = torch.softmax(scaled_tok_logits, dim=-1)
             new_tok=torch.multinomial(probs,num_samples=1).item()
 
             current_toks[idx]=new_tok
@@ -369,6 +370,7 @@ class GibbsEsmRecoder(EsmRecoder):
         #mask_count = len(mask_pos)
         total_iterations = 50 #mask_count * iteration_multiplier
         burn_in_iterations = 5 #mask_count * burn_in_multiplier
+        temp=0.5
 
         for batch_idx, (batch_labels, batch_seqs, batch_toks) in tqdm.tqdm(
                 enumerate(dataloader), total=len(dataloader), desc='Processing batches.'
@@ -397,7 +399,7 @@ class GibbsEsmRecoder(EsmRecoder):
 
                 # [N_res]
                 mask_pos=torch.where(masked_toks==self.mask_id)[0]
-                print(f"Recode position: {mask_pos}")
+                print(f"{len(mask_pos)} Recode position: {mask_pos}")
 
                 # [N_res]
                 #toks = toks.to(self.device)
@@ -409,7 +411,7 @@ class GibbsEsmRecoder(EsmRecoder):
                 sampled_toks_list=[]
                 for i in range(total_iterations):
                     #print(i)
-                    toks=self.update_one_sequence(toks,mask_pos)
+                    toks=self.update_one_sequence(toks,mask_pos,temp)
 
                     if i + 1 > burn_in_iterations:
                         # Important to add .clone() because tensor is mutable while string is not!
@@ -422,7 +424,7 @@ class GibbsEsmRecoder(EsmRecoder):
                 # [N, N_res]
                 sampled_toks=torch.stack(sampled_toks_list,dim=0)
                 
-                # compute new seq pseudo log likelihood
+                # compute new seq pseudo log likelihood (pll)
                 sampled_log_likelihoods = self._compute_seq_pseudo_log_likelihood(toks=sampled_toks, mask_pos=mask_pos)
                 
                 # Save sequences with highest PLL, and closest PLL to wild type PLL
@@ -436,8 +438,8 @@ class GibbsEsmRecoder(EsmRecoder):
                     prefix = label.split('|')[0]
                 else:
                     prefix = label
-                designs[prefix + '_ESM2_gibbs_closest_PLL'] = seq_with_closest_pll
-                designs[prefix + '_ESM2_gibbs_highest_PLL'] = seq_with_highest_pll
+                designs[prefix + f'_ESM2_gibbs_closest_PLL_{temp}'] = seq_with_closest_pll
+                designs[prefix + f'_ESM2_gibbs_highest_PLL_{temp}'] = seq_with_highest_pll
 
         return designs
 
