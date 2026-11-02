@@ -80,6 +80,37 @@ class EsmRecoder:
         new_seq = new_seq.split('<eos>')[0]  # remove eos and padding tokens
         return new_seq
 
+    def _compute_seq_pseudo_log_likelihood(self, toks: torch.Tensor, mask_pos: torch.Tensor):
+        mask_logprobs = []
+        
+        # Make sure toks is on the model device once
+        toks = toks.to(self.device)
+        
+        # Iterate through each mask position
+        for idx in mask_pos:
+            tok_to_predict=toks[:,idx]
+
+            # [N, N_res]
+            masked_toks = toks.clone()
+            masked_toks[:,idx] = self.alphabet.mask_idx
+            masked_toks = masked_toks.to(self.device)
+
+            # [N, N_res, N_vocab]
+            logits = self.model(masked_toks, repr_layers=[33], return_contacts=False)['logits']
+
+            # [N, N_vocab]
+            logprobs = torch.log_softmax(logits[:,idx,:], dim=-1)
+
+            mask_logprob=logprobs.gather(dim=1,index=tok_to_predict.unsqueeze(1))
+            mask_logprobs.append(mask_logprob)
+            
+            del masked_toks
+        
+        # [N, N_mask]
+        mask_logprobs_array=torch.cat(mask_logprobs,dim=1)
+
+        return mask_logprobs_array.mean(dim=1) # [N]
+
     def recode(self):
         if type(self.model) is esm.model.esm2.ESM2:
             dataloader = load_sequences(self.seq_file, self.alphabet)
@@ -182,6 +213,9 @@ class AutoregressiveEsmRecoder(EsmRecoder):
 
     def recode_sequences(self, **kwargs) -> Dict[str, str]:
         designs = {}
+        # Seq identity to the wild type, and design PLL, over the recoded positions
+        seq_identities = {}
+        design_plls = {}
         torch.set_grad_enabled(False)
         dataloader = kwargs['dataloader']
         #is_left_to_right = kwargs['is_left_to_right']
@@ -218,7 +252,8 @@ class AutoregressiveEsmRecoder(EsmRecoder):
                     prefix = label
                     
                 # Find recode positions
-                recode_positions=torch.where(masked_toks == self.mask_id)[0].tolist()
+                mask_pos=torch.where(masked_toks == self.mask_id)[0]
+                recode_positions=mask_pos.tolist()
                 print(f"{len(recode_positions)} Recode positions: {recode_positions}")
 
                 predicted_toks = self._recode_one_sequence(toks,recode_positions)
@@ -233,7 +268,17 @@ class AutoregressiveEsmRecoder(EsmRecoder):
                     design_name += f"_{diffs}"
                 designs[design_name] = new_seq
 
-        return designs
+                # Seq identity to the wild type and PLL, over the recoded positions only
+                if len(mask_pos) == 0:
+                    seq_identities[prefix] = float('nan')
+                    design_plls[prefix] = float('nan')
+                else:
+                    seq_identities[prefix] = (
+                        predicted_toks[mask_pos] == toks[mask_pos]).float().mean().item()
+                    design_plls[prefix] = self._compute_seq_pseudo_log_likelihood(
+                        toks=predicted_toks.unsqueeze(0), mask_pos=mask_pos).item()
+
+        return seq_identities, design_plls, designs
 
 
 class MaxLogLikelihoodEsmRecoder(EsmRecoder):
@@ -257,7 +302,7 @@ class MaxLogLikelihoodEsmRecoder(EsmRecoder):
         torch.set_grad_enabled(False)
         dataloader = kwargs['dataloader']
         ltr_count, rtl_count = 0, 0
-        left_to_right_designs = self.ARRecoder.recode_sequences(dataloader=dataloader, is_left_to_right=True)
+        _, _, left_to_right_designs = self.ARRecoder.recode_sequences(dataloader=dataloader, is_left_to_right=True)
 
         # TODO: uncomment below lines after fixing bug in autoregressive right to left setup
         #right_to_left_designs = self.ARRecoder.recode_sequences(dataloader=dataloader, is_left_to_right=False)
@@ -287,7 +332,11 @@ class MaxLogLikelihoodEsmRecoder(EsmRecoder):
 
 
 class GibbsEsmRecoder(EsmRecoder):
-    
+
+    def __init__(self, temp: float = 0.5, **kwargs):
+        super().__init__(**kwargs)
+        self.temp = temp
+
     def update_one_sequence(self, current_toks: torch.LongTensor, mask_pos, temp, random_order=True):
         if random_order:
             mask_pos=mask_pos[torch.randperm(len(mask_pos))]
@@ -321,36 +370,6 @@ class GibbsEsmRecoder(EsmRecoder):
         # [N_res]
         return current_toks
     
-    def _compute_seq_pseudo_log_likelihood(self, toks: torch.Tensor, mask_pos: torch.Tensor):
-        mask_logprobs = []
-        
-        # Make sure toks is on the model device once
-        toks = toks.to(self.device)
-        
-        # Iterate through each mask position
-        for idx in mask_pos:
-            tok_to_predict=toks[:,idx]
-
-            # [N, N_res]
-            masked_toks = toks.clone()
-            masked_toks[:,idx] = self.alphabet.mask_idx
-            masked_toks = masked_toks.to(self.device)
-
-            # [N, N_res, N_vocab]
-            logits = self.model(masked_toks, repr_layers=[33], return_contacts=False)['logits']
-
-            # [N, N_vocab]
-            logprobs = torch.log_softmax(logits[:,idx,:], dim=-1)
-
-            mask_logprob=logprobs.gather(dim=1,index=tok_to_predict.unsqueeze(1))
-            mask_logprobs.append(mask_logprob)
-            
-            del masked_toks
-        
-        # [N, N_mask]
-        mask_logprobs_array=torch.cat(mask_logprobs,dim=1)
-
-        return mask_logprobs_array.mean(dim=1) # [N]
 
     def _select_seq_with_closest_score_to_wild_type(self, ref_score: float, new_scores: List[float], seqs: List[str]):
         diffs = torch.abs(new_scores - ref_score)
@@ -363,6 +382,9 @@ class GibbsEsmRecoder(EsmRecoder):
     def recode_sequences(self, **kwargs) -> Dict[str, str]:
         torch.manual_seed(23)
         designs = {}
+        # Per-sequence trajectories over all iterations, including burn-in
+        seq_identities = {}
+        log_likelihoods = {}
         torch.set_grad_enabled(False)
         dataloader = kwargs['dataloader']
         # iteration_multiplier = 10
@@ -370,7 +392,7 @@ class GibbsEsmRecoder(EsmRecoder):
         #mask_count = len(mask_pos)
         total_iterations = 50 #mask_count * iteration_multiplier
         burn_in_iterations = 5 #mask_count * burn_in_multiplier
-        temp=0.5
+        temp = self.temp
 
         for batch_idx, (batch_labels, batch_seqs, batch_toks) in tqdm.tqdm(
                 enumerate(dataloader), total=len(dataloader), desc='Processing batches.'
@@ -405,34 +427,42 @@ class GibbsEsmRecoder(EsmRecoder):
                 #toks = toks.to(self.device)
 
                 # compute wild type pseudo log likelihood (PLL)
-                wt_pll = self._compute_seq_pseudo_log_likelihood(toks=toks.unsqueeze(0), mask_pos=mask_pos)
-
+                wt_toks = toks.clone()
+                wt_pll = self._compute_seq_pseudo_log_likelihood(toks=wt_toks.unsqueeze(0), mask_pos=mask_pos)
+                
                 # Concatenate all sampled toks
                 sampled_toks_list=[]
                 for i in range(total_iterations):
                     #print(i)
                     toks=self.update_one_sequence(toks,mask_pos,temp)
 
-                    if i + 1 > burn_in_iterations:
-                        # Important to add .clone() because tensor is mutable while string is not!
-                        # without .clone(), all sampled_toks_list will be the same sequence at the final state
-                        sampled_toks_list.append(toks.clone())
-                        # Decode
-                        new_seq = self.convert_toks_to_seq(toks)
-                        sampled_sequences.append(new_seq)
+                    #if i + 1 > burn_in_iterations:
+                    # Important to add .clone() because tensor is mutable while string is not!
+                    # without .clone(), all sampled_toks_list will be the same sequence at the final state
+                    sampled_toks_list.append(toks.clone())
+                    # Decode
+                    new_seq = self.convert_toks_to_seq(toks)
+                    sampled_sequences.append(new_seq)
 
                 # [N, N_res]
                 sampled_toks=torch.stack(sampled_toks_list,dim=0)
                 
+                # Compute seq identity among reocded positions
+                si_wt=(sampled_toks[:,mask_pos]==wt_toks[mask_pos]).float().mean(dim=1) #[N]
+                
                 # compute new seq pseudo log likelihood (pll)
                 sampled_log_likelihoods = self._compute_seq_pseudo_log_likelihood(toks=sampled_toks, mask_pos=mask_pos)
                 
+                # Only select based on seqs after burn-in
+                selected_log_likelihoods=sampled_log_likelihoods[burn_in_iterations:]
+                selected_sequences=sampled_sequences[burn_in_iterations:]
+                
                 # Save sequences with highest PLL, and closest PLL to wild type PLL
                 seq_with_closest_pll = self._select_seq_with_closest_score_to_wild_type(
-                    ref_score=wt_pll, new_scores=sampled_log_likelihoods, seqs=sampled_sequences)
+                    ref_score=wt_pll, new_scores=selected_log_likelihoods, seqs=selected_sequences)
 
                 seq_with_highest_pll = self._select_seq_with_highest_score(
-                    new_scores=sampled_log_likelihoods, seqs=sampled_sequences)
+                    new_scores=selected_log_likelihoods, seqs=selected_sequences)
 
                 if ("muts" in label) and ("worst" in label):
                     prefix = label.split('|')[0]
@@ -441,7 +471,10 @@ class GibbsEsmRecoder(EsmRecoder):
                 designs[prefix + f'_ESM2_gibbs_closest_PLL_{temp}'] = seq_with_closest_pll
                 designs[prefix + f'_ESM2_gibbs_highest_PLL_{temp}'] = seq_with_highest_pll
 
-        return designs
+                seq_identities[prefix] = si_wt.cpu().numpy()
+                log_likelihoods[prefix] = sampled_log_likelihoods.cpu().numpy()
+
+        return seq_identities, log_likelihoods, designs
 
 
 class SimultaneousMsaTransRecoder(EsmRecoder):

@@ -145,6 +145,13 @@ if __name__ == '__main__':
         help="Confind threshold to define neighbors."
     )
 
+    parser.add_argument(
+        "--temp",
+        type=float,
+        default=0.5,
+        help="Sampling temperature for the Gibbs scheme. Ignored by other schemes."
+    )
+
     # Mutation tracking
     parser.add_argument(
         "--save_muts",
@@ -190,7 +197,7 @@ if __name__ == '__main__':
     elif args.model == 'msa_trans':
         model, alphabet = esm.pretrained.esm_msa1b_t12_100M_UR50S()
 
-    design_method = recoder(
+    recoder_kwargs = dict(
         seq_file=args.infile,
         msa_dir=args.msa_dir,
         structure_dir=args.structure_dir,
@@ -208,6 +215,11 @@ if __name__ == '__main__':
         confind_cutoff=args.confind_cutoff,
         save_muts = args.save_muts
         )
+
+    if args.scheme == 'gibbs':
+        recoder_kwargs['temp'] = args.temp
+
+    design_method = recoder(**recoder_kwargs)
 
     if args.model == 'esm2':
         designs = design_method.recode()
