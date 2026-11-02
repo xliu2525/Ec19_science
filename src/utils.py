@@ -13,12 +13,20 @@ from Bio import SeqIO, pairwise2
 from mpnn import load_data_from_pdb_path
 import pandas as pd
 import subprocess
+from Bio.Align import PairwiseAligner
+import atomium
 
 deletekeys = dict.fromkeys(string.ascii_lowercase)
 deletekeys["."] = None
 deletekeys["*"] = None
 translation = str.maketrans(deletekeys)
 
+AA_3letters1 = {
+    "ALA":"A","ARG":"R","ASN":"N","ASP":"D","CYS":"C",
+    "GLN":"Q","GLU":"E","GLY":"G","HIS":"H","ILE":"I",
+    "LEU":"L","LYS":"K","MET":"M","PHE":"F","PRO":"P",
+    "SER":"S","THR":"T","TRP":"W","TYR":"Y","VAL":"V"
+}
 
 def read_fasta(path: str) -> Tuple[List[str], List[str]]:
     with open(path) as handle:
@@ -26,6 +34,15 @@ def read_fasta(path: str) -> Tuple[List[str], List[str]]:
         labels = [record.id for record in records]
         seqs = [str(record.seq) for record in records]
     return labels, seqs
+
+def write_fasta(seqs, headers, out_fp):
+    with open(out_fp, "w") as f:
+        for i, seq in enumerate(seqs):
+            if headers is None:
+                f.write(f">sequence_{i}\n{seq}\n")
+            else:
+                f.write(f">{headers[i]}\n{seq}\n")
+
 
 def read_designs_fasta(path: str) -> Tuple[List[str], List[str]]:
     with open(path) as handle:
@@ -304,18 +321,42 @@ def get_interacting_indices_from_confind(confind_dir: str, uniprot: str, cutoff:
     neighbor_PDB_idx = sorted(set(neighbors_from_res1 + neighbors_from_res2))
     return neighbor_PDB_idx
 
-def map_pdb_to_full_seq_idx(structure_idx,structures_dir,uniprot,full_seq):
-    
-    structure_data = load_structure_data(structures_dir, uniprot)   
-    seq_from_structure = structure_data.data[0]["seq"]
+def extract_seq_PDB(pdb_file,chain_id):
+    structure=atomium.open(pdb_file)
+    model=structure.model
 
-    structure_to_full, aligned_full, aligned_structure = build_structure_to_full_map(full_seq, seq_from_structure)
-    full_positions_0based = []
-    for idx in structure_idx:
-        full_pos_1based = structure_to_full.get(idx)
-        if full_pos_1based is not None:
-            full_positions_0based.append(full_pos_1based - 1)
+    chain=model.chain(chain_id)
+
+    seq = "".join(
+        AA_3letters1.get(res.name, "X")
+        for res in chain.residues()
+    )
+    return seq
+
+def map_pdb_to_full_seq_idx(structure_idx,structure_dir,uniprot,full_seq):
+    # structure_idx: 1-based
+    structure_seq=extract_seq_PDB(pdb_file=f"{structure_dir}/{uniprot}_nearby_protein_I.pdb",
+                                  chain_id="X")
     
+    # Score settings (equivalent to localxx — no gap penalties, match/mismatch only)
+    aligner = PairwiseAligner()
+    aligner.mode = 'local'
+    aligner.match_score = 2
+    aligner.mismatch_score = -1
+    aligner.open_gap_score = -5
+    aligner.extend_gap_score = -0.5
+
+    alignment = aligner.align(full_seq, structure_seq)[0]
+
+    full_blocks=alignment.aligned[0]
+    structure_blocks=alignment.aligned[1]
+
+    structure_to_full = {}
+    for (f_start,f_end), (s_start,s_end) in zip(full_blocks,structure_blocks):
+        for f_i,s_i in zip(range(f_start,f_end), range(s_start,s_end)):
+            structure_to_full[s_i+1]=f_i
+
+    full_positions_0based=[structure_to_full[idx] for idx in structure_idx if idx in structure_to_full]
     return full_positions_0based
     
 

@@ -12,3 +12,5 @@ data/
 *.txt
 confind.sh
 libdevice.10.bc
+Log/*
+Explore/*
