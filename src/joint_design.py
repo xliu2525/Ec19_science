@@ -1,19 +1,19 @@
 """Autoregressive recoding with ProteinMPNN and ESM2 combined.
 
+Both models work in ONE coordinate system: 0-based indices into the full UniProt
+sequence. `pad_protein_to_full_seq` aligns the PDB chain onto that sequence once
+and scatters its backbone coordinates into a full-length array, leaving NaN
+wherever the structure has nothing.
+
 For each position i in recode_full_positions, in order:
   * mask i in the ProteinMPNN input -> log p_mpnn(s_i | s_-i, structure)
   * mask i in the ESM2 input        -> log p_esm (s_i | s_-i)
-  * add the two log-probs, take the argmax, write it back into BOTH inputs
+  * add the two log-probs, take the argmax, write it back into the sequence
     before moving to the next position.
 
-Positions with no backbone in the PDB fall back to ESM2 alone.
-
-Two coordinate systems are in play and they are NOT interchangeable:
-  * PDB resi       1-based, indexes pdb_seq (chain `target_chain`)
-  * full_seq index 0-based, indexes the UniProt sequence
-`build_full_to_pdb` is the only bridge between them.
-
-Combining in LOG-PROB space, not raw-logit space, is deliberate: see `combine`.
+Positions with mask=0 have no backbone, so ProteinMPNN cannot score them at all
+(conditional_probs does chain_M*mask at protein_mpnn_utils.py:1315). Those fall
+back to ESM2 alone.
 """
 
 import os
@@ -32,10 +32,11 @@ from protein_mpnn_utils import tied_featurize
 
 MPNN_ALPHABET = 'ACDEFGHIKLMNPQRSTVWYX'
 AA20 = 'ACDEFGHIKLMNPQRSTVWY'
+BACKBONE_ATOMS = ('N', 'CA', 'C', 'O')
 
 
 class NoBackboneError(ValueError):
-    """Position is in the PDB sequence but has no backbone coordinates."""
+    """Position has no backbone coordinates, so ProteinMPNN cannot score it."""
 
 
 def esm_to_aa20_index(esm_alphabet):
@@ -48,64 +49,96 @@ def mpnn_to_aa20_index():
     return [MPNN_ALPHABET.index(a) for a in AA20]
 
 
-def build_full_to_pdb(recode_PDB_positions, structure_dir, uniprot_ID, full_seq):
-    """{full_seq index (0-based) -> PDB resi (1-based)} via utils.map_pdb_to_full_seq_idx.
+def _check_target_chain_first(protein, chain_id_dict, target_chain):
+    """tied_featurize concatenates designable chains first, each group sorted
+    (protein_mpnn_utils.py:223-225). Indices into target_chain are therefore
+    valid tensor indices only when target_chain sorts first among the designable
+    chains -- everything here assumes that, so fail loudly if it does not hold."""
+    designed, _fixed = chain_id_dict[protein['name']]
+    if not designed or sorted(designed)[0] != target_chain:
+        raise ValueError(
+            f"chain {target_chain} must be the first designable chain for its "
+            f"residue indices to match tensor indices; got designed={designed}")
 
-    That helper aligns the PDB chain against the full sequence and returns only
-    the positions that aligned, dropping the rest, so zipping its output back
-    onto the input list would pair the wrong residues whenever anything was
-    dropped. When nothing is dropped the order is preserved and one call is
-    enough; otherwise fall back to one call per position -- that costs one
-    realignment each, but the pairing is then exact by construction.
 
-    PDB positions absent from the returned dict are the ones with no structural
-    counterpart; joint_recode handles those with ESM2 alone.
+def _rebuild_concat_seq(protein):
+    """Glue all chains tgt"""
+    letters = sorted(k[len('seq_chain_'):] for k in protein
+                     if k.startswith('seq_chain_')) # All chain ID
+    return ''.join(protein[f'seq_chain_{c}'] for c in letters)
+
+
+def pad_protein_to_full_seq(protein, full_seq, structure_dir, uniprot_ID,
+                            target_chain='X'):
+    """Re-index the designable chain onto the full UniProt sequence.
+
+    Returns a copy of `protein` whose `seq_chain_<target_chain>` is `full_seq`
+    and whose backbone coordinates are based on full_seq, NaN
+    for residues don't have structure. After this, a 0-based index into full_seq is also a valid index
+    into every tensor tied_featurize returns.
     """
     from utils import map_pdb_to_full_seq_idx   # lazy: utils pulls in gemmi
 
-    pdb_positions = list(recode_PDB_positions)
-    full_idx = map_pdb_to_full_seq_idx(pdb_positions, structure_dir, uniprot_ID, full_seq)
-    if len(full_idx) == len(pdb_positions):
-        return {f: p for p, f in zip(pdb_positions, full_idx)}
+    pdb_seq = protein[f'seq_chain_{target_chain}']
+    L0 = len(pdb_seq)
+    full_idx = map_pdb_to_full_seq_idx(list(range(1, L0 + 1)), structure_dir,
+                                       uniprot_ID, full_seq)
+    print(full_idx)
+    if len(full_idx) == L0:
+        pdb_to_full = dict(enumerate(full_idx))
+    else:
+        pdb_to_full = {}
+        for i in range(L0):
+            hit = map_pdb_to_full_seq_idx([i + 1], structure_dir, uniprot_ID, full_seq)
+            if hit:
+                pdb_to_full[i] = hit[0]
+    if not pdb_to_full:
+        raise ValueError("no residue of the PDB chain aligned to full_seq")
 
-    out = {}
-    for p in pdb_positions:
-        hit = map_pdb_to_full_seq_idx([p], structure_dir, uniprot_ID, full_seq)
-        if hit:
-            out[hit[0]] = p
+    LF = len(full_seq)
+    src = protein[f'coords_chain_{target_chain}']
+    padded = {}
+    for a in BACKBONE_ATOMS:
+        key = f'{a}_chain_{target_chain}'
+        xyz = np.asarray(src[key], dtype=float)
+        dst = np.full((LF, 3), np.nan)
+        for i_pdb, i_full in pdb_to_full.items():
+            dst[i_full] = xyz[i_pdb]
+        padded[key] = dst.tolist()
+
+    out = dict(protein)
+    out[f'seq_chain_{target_chain}'] = full_seq
+    out[f'coords_chain_{target_chain}'] = padded
+    out['seq'] = _rebuild_concat_seq(out)
     return out
 
 
-def combine(logp_mpnn, logp_esm, w_mpnn=1.0, w_esm=1.0, omit=()):
-    """Product of experts over the 20 standard amino acids.
+@torch.no_grad()
+def structure_mask(mpnn_model, protein, chain_id_dict, target_chain='X'):
+    """Boolean array over the designable chain: True where backbone coords exist.
+    """
+    _check_target_chain_first(protein, chain_id_dict, target_chain)
+    device = next(mpnn_model.parameters()).device
+    _X, _S, mask, *_rest = tied_featurize(
+        [protein], device, chain_id_dict, None, None, None, None, None)
+    L = len(protein[f'seq_chain_{target_chain}'])
+    return mask[0, :L].cpu().numpy().astype(bool)
 
-    Takes LOG-PROBABILITIES -- but note this does NOT change the designs relative
-    to summing raw logits. log_softmax(l) = l - logsumexp(l), and logsumexp is one
-    scalar per model, identical for every amino acid, so
 
-        w1*logp_A + w2*logp_B  =  w1*l_A + w2*l_B  -  (w1*LSE_A + w2*LSE_B)
-
-    differs from the raw-logit sum by a constant. The argmax is the same at every
-    weight. The reason to work in log-prob space is that the numbers are readable
-    and comparable: the sum is log[p_mpnn^w1 * p_esm^w2], a weighted product of
-    experts, and the per-model terms tell you whether w1/w2 actually balance the
-    two models (they did not at 1:1 -- ESM2's distributions are much sharper).
-    Raw logits carry an arbitrary per-position offset and mean nothing alone.
-
+def combine(logp_mpnn, logp_esm, w_mpnn=1.0, w_esm=1.0, omit='I'):
+    """Weighted sum of logprob over the 20 standard amino acids.
     Setting w_mpnn=0 drops ProteinMPNN out entirely while keeping the `omit` ban,
     which is how the no-structure positions are scored.
     """
     score = w_mpnn * np.asarray(logp_mpnn) + w_esm * np.asarray(logp_esm)
-    for aa in omit:
-        score[AA20.index(aa)] = -np.inf
+    score[AA20.index(omit)] = -np.inf
     return score
 
 
-def _argmax_aa(logp20, omit=()):
+def _argmax_aa(logp20, omit):
     """Best amino acid under a 20-vector, with `omit` banned."""
     v = np.array(logp20, dtype=float)
-    for aa in omit:
-        v[AA20.index(aa)] = -np.inf
+    v[AA20.index(omit)] = -np.inf
     return AA20[int(np.argmax(v))]
 
 
@@ -119,14 +152,19 @@ def mpnn_conditional_logprobs(mpnn_model, protein, chain_id_dict, seq, position0
     """
     device = next(mpnn_model.parameters()).device
     p = dict(protein)
-    old = p[f'seq_chain_{target_chain}']
     p[f'seq_chain_{target_chain}'] = seq
-    p['seq'] = p['seq'].replace(old, seq)
+    p['seq'] = _rebuild_concat_seq(p)
 
+    # mask: Which coordinate has structure coordinates
+    # chain_M: 1=designable, 0=fixed
     (X, S, mask, _lengths, chain_M, chain_encoding_all,
      _chain_list, _visible_list, _masked_list, _masked_chain_lengths,
      _chain_M_pos, _omit_AA_mask, residue_idx, *_unused) = tied_featurize(
         [p], device, chain_id_dict, None, None, None, None, None)
+    # print(S)
+    # print(mask)
+    # print(chain_M)
+    # print(chain_encoding_all)
     # conditional_probs does chain_M*mask internally, so a position missing from the
     # structure would silently yield the zero-initialised row instead of a distribution.
     if mask[0, position0] == 0:
@@ -158,84 +196,66 @@ def esm_conditional_logprobs(esm_model, esm_alphabet, seq, position0, device,
 
 
 def joint_recode(mpnn_model, protein, chain_id_dict, esm_model, esm_alphabet,
-                 pdb_seq, full_seq, recode_full_positions, full_to_pdb,
+                 full_seq, recode_full_positions,
                  w_mpnn=1.0, w_esm=1.0,
-                 omit=('I',), target_chain='X', device=None,
+                 omit='I', target_chain='X', device=None,
                  seed=0, verbose=True):
     """Decode recode_full_positions autoregressively under both models.
 
-    pdb_seq               chain `target_chain` sequence from the PDB -- the MPNN input
-    full_seq              UniProt sequence -- the ESM2 input, so ESM sees the whole protein
+    protein               padded by pad_protein_to_full_seq, so its designable
+                          chain IS full_seq
+    full_seq              UniProt sequence; both models are indexed by it
     recode_full_positions positions to redesign, as 0-based indices into full_seq
-    full_to_pdb           {full index (0-based) -> PDB resi (1-based)}, from
-                          build_full_to_pdb. A position absent from this dict has
-                          no structure and is scored by ESM2 alone.
     omit                  amino acids banned at every recoded position
 
-    Returns (new_pdb_seq, new_full_seq, DataFrame of per-step detail).
+    Positions without backbone coordinates are scored by ESM2 alone.
+
+    Returns (design dict, DataFrame of per-step detail).
     """
+    designs={}
+    if protein[f'seq_chain_{target_chain}'] != full_seq:
+        raise ValueError("protein is not padded to full_seq; "
+                         "call pad_protein_to_full_seq first")
     device = device or next(esm_model.parameters()).device
     esm_idx = esm_to_aa20_index(esm_alphabet)
     mpnn_idx = mpnn_to_aa20_index()
+    has_structure = structure_mask(mpnn_model, protein, chain_id_dict, target_chain)
 
-    cur_pdb = list(pdb_seq)
-    cur_full = list(full_seq)
-
+    cur = list(full_seq)
     rows = []
-    for i_full in recode_full_positions:
-        pdb_resi = full_to_pdb.get(i_full)
-        i_pdb = None if pdb_resi is None else pdb_resi - 1
-
-        if i_pdb is not None and full_seq[i_full] != pdb_seq[i_pdb]:
-            # local alignment tolerates mismatches, so this is possible without the
-            # mapping being wrong -- but it usually means it is.
-            print(f"  warning: full_seq[{i_full}]={full_seq[i_full]} vs "
-                  f"pdb_seq resi {pdb_resi}={pdb_seq[i_pdb]}; check the alignment")
-
-        lp_e = esm_conditional_logprobs(esm_model, esm_alphabet, ''.join(cur_full),
-                                        i_full, device)
+    for i in recode_full_positions:
+        lp_e = esm_conditional_logprobs(esm_model, esm_alphabet, ''.join(cur), i, device)
         e20 = lp_e[esm_idx]
 
-        m20 = None
-        if i_pdb is not None:
-            try:
-                lp_m = mpnn_conditional_logprobs(mpnn_model, protein, chain_id_dict,
-                                                 ''.join(cur_pdb), i_pdb,
-                                                 target_chain=target_chain, seed=seed)
-                m20 = lp_m[mpnn_idx]
-            except NoBackboneError:
-                # in the PDB sequence but no coordinates -- same as no structure
-                m20 = None
-
-        if m20 is None:
-            score = combine(np.zeros(20), e20, 0.0, w_esm, omit)
-            source, mpnn_pick, logp_m = 'esm_only', None, np.nan
-        else:
+        if has_structure[i]:
+            lp_m = mpnn_conditional_logprobs(mpnn_model, protein, chain_id_dict,
+                                             ''.join(cur), i,
+                                             target_chain=target_chain, seed=seed)
+            m20 = lp_m[mpnn_idx]
             score = combine(m20, e20, w_mpnn, w_esm, omit)
             source, mpnn_pick = 'joint', _argmax_aa(m20, omit)
-        pick = AA20[int(np.argmax(score))]
-        if m20 is not None:
-            logp_m = float(m20[AA20.index(pick)])
+        else:
+            m20 = None
+            score = combine(np.zeros(20), e20, 0.0, w_esm, omit)
+            source, mpnn_pick = 'esm_only', None
 
+        pick = AA20[int(np.argmax(score))]
         rows.append({
-            'full_idx': i_full, 'pdb_resi': pdb_resi if m20 is not None else None,
-            'wt': full_seq[i_full], 'picked': pick, 'source': source,
+            'full_idx': i, 'wt': full_seq[i], 'picked': pick, 'source': source,
             'mpnn_argmax': mpnn_pick,
             'esm_argmax': _argmax_aa(e20, omit),
-            'logp_mpnn': logp_m,
+            'logp_mpnn': np.nan if m20 is None else float(m20[AA20.index(pick)]),
             'logp_esm': float(e20[AA20.index(pick)]),
             'joint': float(score[int(np.argmax(score))]),
         })
         if verbose:
             r = rows[-1]
-            where = f"pdb {pdb_resi}" if m20 is not None else "no structure"
             alone = (f"mpnn alone {r['mpnn_argmax']}, " if m20 is not None else "")
-            print(f"  full {i_full:>4} ({where:>13}): {r['wt']}->{pick}   "
+            print(f"  {i:>4} ({source:>9}): {r['wt']}->{pick}   "
                   f"({alone}esm alone {r['esm_argmax']})")
 
-        # autoregressive: commit the pick to BOTH inputs before the next position
-        cur_full[i_full] = pick
-        if i_pdb is not None:
-            cur_pdb[i_pdb] = pick
+        cur[i] = pick                 # autoregressive: commit before the next position
 
-    return ''.join(cur_pdb), ''.join(cur_full), pd.DataFrame(rows)
+    designs["ProteinMPNN+ESM2"]=''.join(cur)
+    
+    return designs, pd.DataFrame(rows)
