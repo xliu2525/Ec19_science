@@ -474,7 +474,7 @@ class GibbsEsmRecoder(EsmRecoder):
                 seq_identities[prefix] = si_wt.cpu().numpy()
                 log_likelihoods[prefix] = sampled_log_likelihoods.cpu().numpy()
 
-        return seq_identities, log_likelihoods, designs
+        return designs
 
 
 class SimultaneousMsaTransRecoder(EsmRecoder):
