@@ -148,7 +148,7 @@ if __name__ == '__main__':
     parser.add_argument(
         "--temp",
         type=float,
-        default=0.5,
+        default=0.1,
         help="Sampling temperature for the Gibbs scheme. Ignored by other schemes."
     )
 
