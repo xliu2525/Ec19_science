@@ -106,7 +106,8 @@ if __name__=="__main__":
 
     # Recode one seq at a time
     for i in range(len(seqs)):
-        uniprot=headers[i].split("_")[0]
+        header=headers[i] # uniprot_gene
+        uniprot=header.split("_")[0]
         sequence=seqs[i]
         # Load structure
         PDB = f"{args.structure_dir}/{uniprot}_nearby_protein_I.pdb"
@@ -142,7 +143,7 @@ if __name__=="__main__":
             )
 
             # Add uniprot to the design name and accumulate across sequences
-            designs.update({f"{uniprot}_{k}": v for k, v in design.items()})
+            designs.update({f"{header}_{k}_autoregressive": v for k, v in design.items()})
 
     check_recoded_sequences(designs=designs, residue=args.residue)
     write_fasta(list(designs.values()), list(designs.keys()), out_fp=args.outfile)
