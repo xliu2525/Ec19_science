@@ -390,7 +390,7 @@ class GibbsEsmRecoder(EsmRecoder):
         # iteration_multiplier = 10
         # burn_in_multiplier = 2
         #mask_count = len(mask_pos)
-        total_iterations = 50 #mask_count * iteration_multiplier
+        total_iterations = 30 #mask_count * iteration_multiplier
         burn_in_iterations = 5 #mask_count * burn_in_multiplier
         temp = self.temp
 
