@@ -94,7 +94,7 @@ if __name__=="__main__":
     device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
 
     # Load proteinmpnn and ESM2
-    mpnn_model = init_mpnn_model("/n/holystore01/LABS/xlin/Lab/xliu2525/Code")
+    mpnn_model = init_mpnn_model("/orcd/compute/so3/001/xiaonanl/Code")
     esm_model, esm_alphabet = esm.pretrained.esm2_t33_650M_UR50D()
     esm_model.eval().to(device)
     
