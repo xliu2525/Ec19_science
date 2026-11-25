@@ -278,7 +278,7 @@ class AutoregressiveEsmRecoder(EsmRecoder):
                     design_plls[prefix] = self._compute_seq_pseudo_log_likelihood(
                         toks=predicted_toks.unsqueeze(0), mask_pos=mask_pos).item()
 
-        return seq_identities, design_plls, designs
+        return designs
 
 
 class MaxLogLikelihoodEsmRecoder(EsmRecoder):
